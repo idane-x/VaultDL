@@ -35,6 +35,17 @@ export function regionFlagEmoji(region: Region): string {
   return REGION_FLAGS[region] ?? '🌐';
 }
 
+/**
+ * Map a Metacritic-style score (0-100, or null when absent) to a compact Tailwind
+ * bg+text class pair for score badges. Shared by the table row cover and grid card.
+ */
+export function scoreColor(score: number | null): string {
+  if (score === null || score === undefined) return 'bg-vault-panel2 text-vault-muted';
+  if (score >= 75) return 'bg-vault-accent2/90 text-vault-bg';
+  if (score >= 50) return 'bg-amber-500/90 text-vault-bg';
+  return 'bg-rose-500/90 text-white';
+}
+
 /** Format a duration-since timestamp (ms epoch) as a short relative string. */
 export function formatAddedAt(ms: number): string {
   const diff = Date.now() - ms;

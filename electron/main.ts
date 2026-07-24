@@ -1,9 +1,27 @@
-import { app, BrowserWindow } from 'electron';
-import { fileURLToPath } from 'node:url';
+import { app, BrowserWindow, protocol, net } from 'electron';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { registerIpcHandlers } from './services/ipc.js';
+import { artcacheDir } from './services/paths.js';
+import { ARTCACHE_SCHEME, artcacheRelPath } from './shared/artcache.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Must run before app 'ready'. Marks the scheme so the renderer may load it as <img src>.
+protocol.registerSchemesAsPrivileged([
+  { scheme: ARTCACHE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
+
+function registerArtcacheProtocol(): void {
+  protocol.handle(ARTCACHE_SCHEME, (request) => {
+    const rel = artcacheRelPath(request.url);
+    if (!rel) return new Response('Bad artcache URL', { status: 400 });
+    const abs = path.join(artcacheDir(), rel);
+    // Keep resolved path inside the cache dir.
+    if (!abs.startsWith(artcacheDir())) return new Response('Forbidden', { status: 403 });
+    return net.fetch(pathToFileURL(abs).toString());
+  });
+}
 
 // Vite plugin injects this in dev; undefined in a packaged build.
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
@@ -40,6 +58,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  registerArtcacheProtocol();
   createWindow();
   if (mainWindow) registerIpcHandlers(mainWindow);
 

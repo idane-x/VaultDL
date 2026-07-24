@@ -105,6 +105,49 @@ export interface DownloadProgress {
   error?: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Metadata (box art from TheGamesDB, Metacritic score from RAWG)
+// ---------------------------------------------------------------------------
+
+export type MetaStatus = 'ok' | 'no-match' | 'no-key' | 'error' | 'loading';
+
+/** An alternative provider match, offered when the auto-pick looks wrong. */
+export interface MetaCandidate {
+  /** Provider-native game id (stringified). */
+  id: string;
+  title: string;
+  year: string | null;
+  /** Small preview image, served through the artcache: protocol when cached. */
+  thumbUrl: string | null;
+}
+
+/** Resolved metadata for one vault game, combining art + score providers. */
+export interface GameMeta {
+  vaultId: number;
+  systemCode: string;
+  /** The provider title we matched against (for transparency / debugging). */
+  matchedTitle: string | null;
+  /**
+   * Front box-art URL. When cached to disk it is an `artcache://…` URL the renderer
+   * can put straight in an <img src>; null when unmatched or art unavailable.
+   */
+  boxArtUrl: string | null;
+  /** Metacritic score (0–100) from RAWG, or null if none. */
+  metascore: number | null;
+  /** Release date/year enriched from a provider, if found. */
+  releaseDate: string | null;
+  status: MetaStatus;
+  /** Populated on request so the UI can offer a manual re-match. */
+  candidates?: MetaCandidate[];
+}
+
+/** Identifies a game to look metadata up for. */
+export interface MetaLookup {
+  vaultId: number;
+  systemCode: string;
+  title: string;
+}
+
 export interface Settings {
   /** Root of an EmuDeck-style layout; targets compose as {root}/roms/{emudeck}. */
   emudeckRoot: string | null;
@@ -119,6 +162,12 @@ export interface Settings {
   /** Listing cache time-to-live in minutes. */
   cacheTtlMinutes: number;
   firstRunAcknowledged: boolean;
+  /** Master toggle for fetching box art + scores. */
+  metadataEnabled: boolean;
+  /** TheGamesDB API key (box art). Empty/null disables art lookups. */
+  tgdbApiKey: string | null;
+  /** RAWG API key (Metacritic score). Empty/null disables score lookups. */
+  rawgApiKey: string | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -131,6 +180,9 @@ export const DEFAULT_SETTINGS: Settings = {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
   cacheTtlMinutes: 720,
   firstRunAcknowledged: false,
+  metadataEnabled: true,
+  tgdbApiKey: null,
+  rawgApiKey: null,
 };
 
 /** Result of a folder-picker dialog. */
@@ -168,6 +220,15 @@ export interface VimmApi {
   cancelItem(id: string): Promise<void>;
   removeItem(id: string): Promise<void>;
   clearFinished(): Promise<void>;
+
+  /**
+   * Resolve box art + score for a game. Cheap to call repeatedly — results are cached
+   * in the main process (memory + disk). Returns status 'no-key' when the relevant API
+   * key is unset. `withCandidates` requests the alternative-match list for the override UI.
+   */
+  getGameMeta(lookup: MetaLookup, withCandidates?: boolean): Promise<GameMeta>;
+  /** Re-point a game's art match at a specific TheGamesDB candidate id and re-cache. */
+  overrideGameMeta(lookup: MetaLookup, candidateId: string): Promise<GameMeta>;
 
   /** Subscribe to progress pushes; returns an unsubscribe fn. */
   onProgress(cb: (p: DownloadProgress) => void): () => void;

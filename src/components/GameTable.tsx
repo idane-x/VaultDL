@@ -1,10 +1,14 @@
-import type { GameListItem } from '@shared/types';
+import type { GameListItem, MetaLookup } from '@shared/types';
+import GameCover from './GameCover';
 import { regionFlagEmoji } from '../lib/format';
 
 export interface GameTableProps {
   items: GameListItem[];
   isLoading: boolean;
+  systemCode: string;
+  metadataEnabled: boolean;
   onAdd: (item: GameListItem) => void;
+  onOpenOverride: (lookup: MetaLookup) => void;
   /** vaultIds currently present in the download queue, to disable/relabel the button. */
   queuedVaultIds?: Set<number>;
 }
@@ -21,7 +25,15 @@ function RegionCell({ regions }: { regions: GameListItem['regions'] }) {
 }
 
 /** Renders a listing as a table with a per-row download action. Handles loading/empty states. */
-export default function GameTable({ items, isLoading, onAdd, queuedVaultIds }: GameTableProps) {
+export default function GameTable({
+  items,
+  isLoading,
+  systemCode,
+  metadataEnabled,
+  onAdd,
+  onOpenOverride,
+  queuedVaultIds,
+}: GameTableProps) {
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-vault-muted">
@@ -44,6 +56,7 @@ export default function GameTable({ items, isLoading, onAdd, queuedVaultIds }: G
       <table className="w-full border-collapse text-sm">
         <thead className="sticky top-0 z-10 bg-vault-panel">
           <tr className="border-b border-vault-border text-start text-xs uppercase tracking-wide text-vault-muted">
+            <th className="px-3 py-2" />
             <th className="px-3 py-2 text-start font-medium">Title</th>
             <th className="px-3 py-2 text-start font-medium">Region</th>
             <th className="px-3 py-2 text-start font-medium">Version</th>
@@ -56,11 +69,20 @@ export default function GameTable({ items, isLoading, onAdd, queuedVaultIds }: G
         <tbody>
           {items.map((item) => {
             const queued = queuedVaultIds?.has(item.vaultId) ?? false;
+            const lookup: MetaLookup = { vaultId: item.vaultId, systemCode, title: item.title };
             return (
               <tr
                 key={item.vaultId}
                 className="border-b border-vault-border/60 transition-colors hover:bg-vault-panel2"
               >
+                <td className="px-3 py-2">
+                  <GameCover
+                    lookup={lookup}
+                    enabled={metadataEnabled}
+                    onOverride={onOpenOverride}
+                    variant="row"
+                  />
+                </td>
                 <td className="max-w-[22rem] truncate px-3 py-2 text-vault-text" title={item.title}>
                   {item.title}
                 </td>

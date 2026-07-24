@@ -3,6 +3,8 @@ import type {
   DownloadProgress,
   GameDetail,
   GameListItem,
+  GameMeta,
+  MetaLookup,
   PickFolderResult,
   QueueItem,
   Settings,
@@ -37,6 +39,11 @@ const api: VimmApi = {
   cancelItem: (id) => ipcRenderer.invoke('queue:cancel', id) as Promise<void>,
   removeItem: (id) => ipcRenderer.invoke('queue:remove', id) as Promise<void>,
   clearFinished: () => ipcRenderer.invoke('queue:clearFinished') as Promise<void>,
+
+  getGameMeta: (lookup: MetaLookup, withCandidates?: boolean) =>
+    ipcRenderer.invoke('meta:get', lookup, withCandidates) as Promise<GameMeta>,
+  overrideGameMeta: (lookup: MetaLookup, candidateId: string) =>
+    ipcRenderer.invoke('meta:override', lookup, candidateId) as Promise<GameMeta>,
 
   onProgress: (cb: (p: DownloadProgress) => void) => {
     const listener = (_e: unknown, p: DownloadProgress) => cb(p);

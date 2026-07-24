@@ -1,10 +1,13 @@
 import { useMemo, useState } from 'react';
-import type { GameListItem } from '@shared/types';
+import type { GameListItem, MetaLookup } from '@shared/types';
 import Sidebar from './components/Sidebar';
 import SectionTabs from './components/SectionTabs';
 import SearchBox from './components/SearchBox';
 import FilterBar from './components/FilterBar';
 import GameTable from './components/GameTable';
+import GameGrid from './components/GameGrid';
+import MetaOverrideModal from './components/MetaOverrideModal';
+import MetaKeyBanner from './components/MetaKeyBanner';
 import QueuePanel from './components/QueuePanel';
 import SettingsModal from './components/SettingsModal';
 import FirstRunNotice from './components/FirstRunNotice';
@@ -15,6 +18,8 @@ import { applyFilters, applySearch, collectRegions, EMPTY_FILTERS } from './lib/
 import type { ListingFilters } from './lib/filtering';
 import { SYSTEM_BY_CODE } from '@shared/systems';
 
+type ViewMode = 'table' | 'grid';
+
 export default function App() {
   const [selectedSystemCode, setSelectedSystemCode] = useState<string>('SNES');
   const [selectedLetter, setSelectedLetter] = useState<string>('A');
@@ -22,6 +27,8 @@ export default function App() {
   const [filters, setFilters] = useState<ListingFilters>(EMPTY_FILTERS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addingVaultId, setAddingVaultId] = useState<number | null>(null);
+  const [view, setView] = useState<ViewMode>('table');
+  const [overrideLookup, setOverrideLookup] = useState<MetaLookup | null>(null);
 
   const { settings, save, pickFolder } = useSettings();
   const { items, isLoading } = useGameListing(selectedSystemCode, selectedLetter);
@@ -37,6 +44,9 @@ export default function App() {
   }, [items, search, filters]);
 
   const queuedVaultIds = useMemo(() => new Set(queue.map((q) => q.vaultId)), [queue]);
+
+  const showMetaKeyBanner =
+    settings.metadataEnabled && !settings.tgdbApiKey?.trim() && !settings.rawgApiKey?.trim();
 
   const handleSelectSystem = (code: string) => {
     setSelectedSystemCode(code);
@@ -89,17 +99,62 @@ export default function App() {
           <div className="flex items-center gap-2">
             <SearchBox value={search} onChange={setSearch} />
             <FilterBar availableRegions={availableRegions} filters={filters} onChange={setFilters} />
+            <div className="flex items-center rounded-md border border-vault-border bg-vault-panel2 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setView('table')}
+                aria-pressed={view === 'table'}
+                className={`rounded px-2.5 py-1 font-medium transition-colors ${
+                  view === 'table'
+                    ? 'bg-vault-accent text-vault-bg'
+                    : 'text-vault-muted hover:text-vault-text'
+                }`}
+              >
+                Table
+              </button>
+              <button
+                type="button"
+                onClick={() => setView('grid')}
+                aria-pressed={view === 'grid'}
+                className={`rounded px-2.5 py-1 font-medium transition-colors ${
+                  view === 'grid'
+                    ? 'bg-vault-accent text-vault-bg'
+                    : 'text-vault-muted hover:text-vault-text'
+                }`}
+              >
+                Grid
+              </button>
+            </div>
           </div>
         </div>
 
         <SectionTabs selectedLetter={selectedLetter} onSelectLetter={setSelectedLetter} />
 
-        <GameTable
-          items={visibleItems}
-          isLoading={isLoading}
-          onAdd={handleAdd}
-          queuedVaultIds={queuedVaultIds}
-        />
+        {showMetaKeyBanner && (
+          <MetaKeyBanner onOpenSettings={() => setSettingsOpen(true)} />
+        )}
+
+        {view === 'table' ? (
+          <GameTable
+            items={visibleItems}
+            isLoading={isLoading}
+            systemCode={selectedSystemCode}
+            metadataEnabled={settings.metadataEnabled}
+            onAdd={handleAdd}
+            onOpenOverride={setOverrideLookup}
+            queuedVaultIds={queuedVaultIds}
+          />
+        ) : (
+          <GameGrid
+            items={visibleItems}
+            isLoading={isLoading}
+            systemCode={selectedSystemCode}
+            metadataEnabled={settings.metadataEnabled}
+            onAdd={handleAdd}
+            onOpenOverride={setOverrideLookup}
+            queuedVaultIds={queuedVaultIds}
+          />
+        )}
       </main>
 
       <QueuePanel
@@ -123,6 +178,8 @@ export default function App() {
         open={!settings.firstRunAcknowledged}
         onAcknowledge={() => save({ firstRunAcknowledged: true })}
       />
+
+      <MetaOverrideModal lookup={overrideLookup} onClose={() => setOverrideLookup(null)} />
     </div>
   );
 }

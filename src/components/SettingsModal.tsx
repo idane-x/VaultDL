@@ -21,6 +21,8 @@ export default function SettingsModal({
   const [draft, setDraft] = useState<Settings>(settings);
   const [saving, setSaving] = useState(false);
   const [overrideFilter, setOverrideFilter] = useState('');
+  const [showTgdbKey, setShowTgdbKey] = useState(false);
+  const [showRawgKey, setShowRawgKey] = useState(false);
 
   useEffect(() => {
     if (open) setDraft(settings);
@@ -141,6 +143,93 @@ export default function SettingsModal({
                 className="h-4 w-4 rounded border-vault-border bg-vault-panel2 accent-vault-accent"
               />
             </label>
+          </section>
+
+          <section className="space-y-3 border-t border-vault-border pt-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-vault-muted">
+              Metadata
+            </div>
+
+            <label className="flex items-center justify-between gap-3 text-sm text-vault-text">
+              <span>
+                <span className="block">Box art &amp; scores</span>
+                <span className="block text-xs font-normal text-vault-muted">
+                  Fetch cover art from TheGamesDB and Metacritic scores from RAWG.
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={draft.metadataEnabled}
+                onChange={(e) => setDraft((d) => ({ ...d, metadataEnabled: e.target.checked }))}
+                className="h-4 w-4 shrink-0 rounded border-vault-border bg-vault-panel2 accent-vault-accent"
+              />
+            </label>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-vault-muted">
+                TheGamesDB API key
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type={showTgdbKey ? 'text' : 'password'}
+                  value={draft.tgdbApiKey ?? ''}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, tgdbApiKey: e.target.value || null }))
+                  }
+                  placeholder="Not set"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="flex-1 rounded-md border border-vault-border bg-vault-panel2 px-2 py-1.5 text-sm text-vault-text placeholder:text-vault-muted focus:border-vault-accent focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowTgdbKey((s) => !s)}
+                  className="shrink-0 rounded-md bg-vault-panel2 px-3 py-1.5 text-sm text-vault-text hover:bg-vault-border"
+                >
+                  {showTgdbKey ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-vault-muted">
+                Free — get one at forums.thegamesdb.net (API Key Request board). Used for box
+                art.
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-vault-muted">
+                RAWG API key
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type={showRawgKey ? 'text' : 'password'}
+                  value={draft.rawgApiKey ?? ''}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, rawgApiKey: e.target.value || null }))
+                  }
+                  placeholder="Not set"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="flex-1 rounded-md border border-vault-border bg-vault-panel2 px-2 py-1.5 text-sm text-vault-text placeholder:text-vault-muted focus:border-vault-accent focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowRawgKey((s) => !s)}
+                  className="shrink-0 rounded-md bg-vault-panel2 px-3 py-1.5 text-sm text-vault-text hover:bg-vault-border"
+                >
+                  {showRawgKey ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-vault-muted">
+                Free — get one at rawg.io/apidocs. Used for Metacritic scores.
+              </p>
+            </div>
+
+            {draft.metadataEnabled && !draft.tgdbApiKey?.trim() && !draft.rawgApiKey?.trim() && (
+              <p className="rounded-md bg-vault-panel2 px-2.5 py-1.5 text-xs text-vault-muted">
+                No keys set — box art and scores will show placeholders until you add at least
+                one.
+              </p>
+            )}
           </section>
 
           <section>

@@ -12,6 +12,8 @@ import type {
   DownloadProgress,
   GameDetail,
   GameListItem,
+  GameMeta,
+  MetaLookup,
   PickFolderResult,
   QueueItem,
   Settings,
@@ -21,6 +23,7 @@ import { getSettings, saveSettings } from './SettingsStore.js';
 import { cacheStore } from './CacheStore.js';
 import { resolveFolder } from './FolderResolver.js';
 import { downloadManager, type EnqueueInput } from './DownloadManager.js';
+import { MetadataService } from './MetadataService.js';
 
 let currentWindow: BrowserWindow | null = null;
 let handlersRegistered = false;
@@ -119,4 +122,18 @@ export function registerIpcHandlers(win: BrowserWindow): void {
   ipcMain.handle('queue:clearFinished', async (): Promise<void> => {
     downloadManager.clearFinished();
   });
+
+  // -- Metadata (box art + Metacritic score) --------------------------------
+
+  ipcMain.handle(
+    'meta:get',
+    async (_e, lookup: MetaLookup, withCandidates?: boolean): Promise<GameMeta> =>
+      MetadataService.getMeta(lookup, withCandidates),
+  );
+
+  ipcMain.handle(
+    'meta:override',
+    async (_e, lookup: MetaLookup, candidateId: string): Promise<GameMeta> =>
+      MetadataService.overrideMeta(lookup, candidateId),
+  );
 }
