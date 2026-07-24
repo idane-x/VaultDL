@@ -2,8 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   DownloadProgress,
   GameDetail,
-  GameListItem,
   GameMeta,
+  ListPage,
+  ListQuery,
   MetaLookup,
   PickFolderResult,
   QueueItem,
@@ -17,10 +18,8 @@ import type {
  * 'queue-changed') map to webContents.send(...) there.
  */
 const api: VimmApi = {
-  getListing: (systemCode, letter, force) =>
-    ipcRenderer.invoke('vault:getListing', systemCode, letter, force) as Promise<
-      GameListItem[]
-    >,
+  getList: (query: ListQuery, force?: boolean) =>
+    ipcRenderer.invoke('vault:getList', query, force) as Promise<ListPage>,
   getDetail: (vaultId, systemCode) =>
     ipcRenderer.invoke('vault:getDetail', vaultId, systemCode) as Promise<GameDetail>,
 

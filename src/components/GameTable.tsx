@@ -1,11 +1,13 @@
 import type { GameListItem, MetaLookup } from '@shared/types';
+import { SYSTEM_BY_CODE } from '@shared/systems';
 import GameCover from './GameCover';
 import { regionFlagEmoji } from '../lib/format';
 
 export interface GameTableProps {
   items: GameListItem[];
   isLoading: boolean;
-  systemCode: string;
+  /** Show a System column — enabled in global search mode where rows span consoles. */
+  showSystem: boolean;
   metadataEnabled: boolean;
   onAdd: (item: GameListItem) => void;
   onOpenOverride: (lookup: MetaLookup) => void;
@@ -24,11 +26,16 @@ function RegionCell({ regions }: { regions: GameListItem['regions'] }) {
   );
 }
 
+function systemLabel(systemCode: string | null): string {
+  if (!systemCode) return 'Unknown';
+  return SYSTEM_BY_CODE[systemCode]?.label ?? systemCode;
+}
+
 /** Renders a listing as a table with a per-row download action. Handles loading/empty states. */
 export default function GameTable({
   items,
   isLoading,
-  systemCode,
+  showSystem,
   metadataEnabled,
   onAdd,
   onOpenOverride,
@@ -58,6 +65,7 @@ export default function GameTable({
           <tr className="border-b border-vault-border text-start text-xs uppercase tracking-wide text-vault-muted">
             <th className="px-3 py-2" />
             <th className="px-3 py-2 text-start font-medium">Title</th>
+            {showSystem && <th className="px-3 py-2 text-start font-medium">System</th>}
             <th className="px-3 py-2 text-start font-medium">Region</th>
             <th className="px-3 py-2 text-start font-medium">Version</th>
             <th className="px-3 py-2 text-start font-medium">Languages</th>
@@ -69,7 +77,11 @@ export default function GameTable({
         <tbody>
           {items.map((item) => {
             const queued = queuedVaultIds?.has(item.vaultId) ?? false;
-            const lookup: MetaLookup = { vaultId: item.vaultId, systemCode, title: item.title };
+            const hasSystem = item.systemCode !== null;
+            const lookup: MetaLookup | null = item.systemCode
+              ? { vaultId: item.vaultId, systemCode: item.systemCode, title: item.title }
+              : null;
+            const downloadDisabled = queued || !hasSystem;
             return (
               <tr
                 key={item.vaultId}
@@ -86,6 +98,9 @@ export default function GameTable({
                 <td className="max-w-[22rem] truncate px-3 py-2 text-vault-text" title={item.title}>
                   {item.title}
                 </td>
+                {showSystem && (
+                  <td className="px-3 py-2 text-vault-muted">{systemLabel(item.systemCode)}</td>
+                )}
                 <td className="px-3 py-2">
                   <RegionCell regions={item.regions} />
                 </td>
@@ -98,15 +113,16 @@ export default function GameTable({
                 <td className="px-3 py-2 text-end">
                   <button
                     type="button"
-                    disabled={queued}
+                    disabled={downloadDisabled}
+                    title={!hasSystem ? 'Unknown system — cannot download' : undefined}
                     onClick={() => onAdd(item)}
                     className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                      queued
+                      downloadDisabled
                         ? 'cursor-not-allowed bg-vault-panel2 text-vault-muted'
                         : 'bg-vault-accent text-vault-bg hover:brightness-110'
                     }`}
                   >
-                    {queued ? 'Queued' : 'Download'}
+                    {queued ? 'Queued' : !hasSystem ? 'Unavailable' : 'Download'}
                   </button>
                 </td>
               </tr>

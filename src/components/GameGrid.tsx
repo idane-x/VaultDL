@@ -1,11 +1,13 @@
 import type { GameListItem, MetaLookup } from '@shared/types';
+import { SYSTEM_BY_CODE } from '@shared/systems';
 import GameCover from './GameCover';
 import { regionFlagEmoji } from '../lib/format';
 
 export interface GameGridProps {
   items: GameListItem[];
   isLoading: boolean;
-  systemCode: string;
+  /** Show a small system badge on each card — enabled in global search mode. */
+  showSystem: boolean;
   metadataEnabled: boolean;
   onAdd: (item: GameListItem) => void;
   onOpenOverride: (lookup: MetaLookup) => void;
@@ -13,11 +15,16 @@ export interface GameGridProps {
   queuedVaultIds?: Set<number>;
 }
 
+function systemLabel(systemCode: string | null): string {
+  if (!systemCode) return 'Unknown';
+  return SYSTEM_BY_CODE[systemCode]?.label ?? systemCode;
+}
+
 /** Box-art gallery view of a listing: responsive card grid with cover, title, regions, score, download. */
 export default function GameGrid({
   items,
   isLoading,
-  systemCode,
+  showSystem,
   metadataEnabled,
   onAdd,
   onOpenOverride,
@@ -45,18 +52,29 @@ export default function GameGrid({
       <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-4">
         {items.map((item) => {
           const queued = queuedVaultIds?.has(item.vaultId) ?? false;
-          const lookup: MetaLookup = { vaultId: item.vaultId, systemCode, title: item.title };
+          const hasSystem = item.systemCode !== null;
+          const lookup: MetaLookup | null = item.systemCode
+            ? { vaultId: item.vaultId, systemCode: item.systemCode, title: item.title }
+            : null;
+          const downloadDisabled = queued || !hasSystem;
           return (
             <div
               key={item.vaultId}
               className="flex flex-col overflow-hidden rounded-lg border border-vault-border bg-vault-panel2 transition-colors hover:border-vault-accent/50"
             >
-              <GameCover
-                lookup={lookup}
-                enabled={metadataEnabled}
-                onOverride={onOpenOverride}
-                variant="card"
-              />
+              <div className="relative">
+                <GameCover
+                  lookup={lookup}
+                  enabled={metadataEnabled}
+                  onOverride={onOpenOverride}
+                  variant="card"
+                />
+                {showSystem && (
+                  <span className="absolute start-1 top-1 rounded bg-vault-bg/80 px-1.5 py-0.5 text-[10px] font-medium text-vault-text backdrop-blur">
+                    {systemLabel(item.systemCode)}
+                  </span>
+                )}
+              </div>
               <div className="flex flex-1 flex-col gap-1.5 p-2.5">
                 <p
                   className="line-clamp-2 min-h-[2.25rem] text-xs font-medium text-vault-text"
@@ -80,15 +98,16 @@ export default function GameGrid({
                 </div>
                 <button
                   type="button"
-                  disabled={queued}
+                  disabled={downloadDisabled}
+                  title={!hasSystem ? 'Unknown system — cannot download' : undefined}
                   onClick={() => onAdd(item)}
                   className={`mt-auto rounded-md px-2 py-1 text-xs font-medium transition-colors ${
-                    queued
+                    downloadDisabled
                       ? 'cursor-not-allowed bg-vault-panel text-vault-muted'
                       : 'bg-vault-accent text-vault-bg hover:brightness-110'
                   }`}
                 >
-                  {queued ? 'Queued' : 'Download'}
+                  {queued ? 'Queued' : !hasSystem ? 'Unavailable' : 'Download'}
                 </button>
               </div>
             </div>

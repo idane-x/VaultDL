@@ -11,14 +11,15 @@ import { type BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import type {
   DownloadProgress,
   GameDetail,
-  GameListItem,
   GameMeta,
+  ListPage,
+  ListQuery,
   MetaLookup,
   PickFolderResult,
   QueueItem,
   Settings,
 } from '@shared/types.js';
-import { fetchDetail, fetchListing } from './VimmClient.js';
+import { fetchDetail, fetchList } from './VimmClient.js';
 import { getSettings, saveSettings } from './SettingsStore.js';
 import { cacheStore } from './CacheStore.js';
 import { resolveFolder } from './FolderResolver.js';
@@ -45,16 +46,16 @@ export function registerIpcHandlers(win: BrowserWindow): void {
   // -- Vault browsing --------------------------------------------------------
 
   ipcMain.handle(
-    'vault:getListing',
-    async (_e, systemCode: string, letter: string, force?: boolean): Promise<GameListItem[]> => {
-      const key = `${systemCode}/${letter}`;
+    'vault:getList',
+    async (_e, query: ListQuery, force?: boolean): Promise<ListPage> => {
+      const key = `list:${JSON.stringify(query)}`;
       if (!force) {
         const cached = cacheStore.get(key);
         if (cached) return cached;
       }
-      const items = await fetchListing(systemCode, letter, { userAgent: getSettings().userAgent });
-      cacheStore.set(key, items);
-      return items;
+      const page = await fetchList(query, { userAgent: getSettings().userAgent });
+      cacheStore.set(key, page);
+      return page;
     },
   );
 

@@ -15,11 +15,17 @@ export type Region =
   | 'World'
   | 'Other';
 
-/** One row parsed from a /vault/{code}/{letter} listing table. */
+/** One row parsed from an advanced-list (`p=list&mode=adv`) results table. */
 export interface GameListItem {
   /** The vault page id (path segment in /vault/{id}). NOTE: not the download mediaId. */
   vaultId: number;
   title: string;
+  /**
+   * The system this row belongs to. In browse mode it's the browsed system; in global
+   * search it's parsed from the results table's System column (which holds the code).
+   * Used for downloading (folder routing) and metadata lookups.
+   */
+  systemCode: string | null;
   regions: Region[];
   version: string | null;
   languages: string[];
@@ -28,8 +34,42 @@ export interface GameListItem {
   /** File size text if the listing exposes it (varies by console), else null. */
   sizeText: string | null;
   serial: string | null;
+  /** Marked with the site's "Unlicensed" badge. */
+  unlicensed: boolean;
   /** Release/dump date, filled in lazily once the detail page is fetched. */
   releaseDate: string | null;
+}
+
+/** Sort order accepted by the advanced list. */
+export type SortOrder = 'ASC' | 'DESC';
+
+/**
+ * A query against Vimm's advanced list endpoint
+ * (`/vault/?p=list&mode=adv&…`). `region` is REQUIRED by the site — an empty region 404s,
+ * so there is no single "all regions" request; the UI exposes a region picker instead.
+ * Provide `systemCode` to browse one console, OR `q` (>=3 chars, systemCode omitted) to
+ * search across all consoles.
+ */
+export interface ListQuery {
+  systemCode?: string | null;
+  q?: string | null;
+  /** Numeric Vimm region id as a string, e.g. '25' = USA. */
+  regionId: string;
+  /** Sort field, e.g. 'Title' | 'Year' | 'Rating' | 'Size' | 'System'. */
+  sort: string;
+  sortOrder: SortOrder;
+  /** 1-based page number. */
+  page: number;
+}
+
+/** One page of advanced-list results. */
+export interface ListPage {
+  items: GameListItem[];
+  page: number;
+  /** True when a next page exists (a further `page=` link is present). */
+  hasMore: boolean;
+  /** True when this was a cross-system search (rows carry their own systemCode). */
+  isSearch: boolean;
 }
 
 /** A downloadable media entry from the detail page's embedded `media` JSON blob. */
@@ -196,7 +236,11 @@ export interface PickFolderResult {
  * Keep this in lockstep with electron/preload.ts and the ipc handlers in main.ts.
  */
 export interface VimmApi {
-  getListing(systemCode: string, letter: string, force?: boolean): Promise<GameListItem[]>;
+  /**
+   * Fetch one page of the advanced list — browse a console (`query.systemCode`) or search
+   * across all of them (`query.q`). See ListQuery. Cached per full query in main.
+   */
+  getList(query: ListQuery, force?: boolean): Promise<ListPage>;
   getDetail(vaultId: number, systemCode: string): Promise<GameDetail>;
 
   getSettings(): Promise<Settings>;

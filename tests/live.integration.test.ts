@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 import {
-  fetchListing,
+  fetchList,
   fetchDetail,
   buildDownloadRequest,
 } from '../electron/services/VimmClient.js';
@@ -21,9 +21,13 @@ const UA =
 
 live('LIVE vimm.net end-to-end', () => {
   it('lists → details → downloads → extracts a small NES ROM', async () => {
-    // 1. Listing
-    const items = await fetchListing('NES', 'A', { userAgent: UA });
-    console.log(`[listing] NES/A returned ${items.length} games`);
+    // 1. Listing (advanced list, NES / USA)
+    const listPage = await fetchList(
+      { systemCode: 'NES', regionId: '25', sort: 'Title', sortOrder: 'ASC', page: 1 },
+      { userAgent: UA },
+    );
+    const items = listPage.items;
+    console.log(`[listing] NES/USA page 1 returned ${items.length} games (hasMore=${listPage.hasMore})`);
     expect(items.length).toBeGreaterThan(5);
 
     // Pick a genuinely small title: fetch details until we find one < 256 KB.

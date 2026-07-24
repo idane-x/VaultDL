@@ -1,16 +1,17 @@
 /**
- * CacheStore — in-memory + on-disk cache of parsed vault listings, keyed by
- * `${systemCode}/${letter}`. Backed by a single JSON file under userData so cold starts
- * still get a warm cache; entries expire per `settings.cacheTtlMinutes`.
+ * CacheStore — in-memory + on-disk cache of parsed advanced-list pages, keyed by the
+ * full query (e.g. `list:${JSON.stringify(query)}`). Backed by a single JSON file under
+ * userData so cold starts still get a warm cache; entries expire per
+ * `settings.cacheTtlMinutes`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
-import type { GameListItem } from '@shared/types.js';
+import type { ListPage } from '@shared/types.js';
 import { getSettings } from './SettingsStore.js';
 
 interface CacheEntry {
-  items: GameListItem[];
+  data: ListPage;
   fetchedAt: number;
 }
 
@@ -55,7 +56,7 @@ class CacheStoreImpl {
     }
   }
 
-  get(key: string): GameListItem[] | null {
+  get(key: string): ListPage | null {
     this.ensureLoaded();
     const entry = this.cache[key];
     if (!entry) return null;
@@ -65,12 +66,12 @@ class CacheStoreImpl {
       delete this.cache[key];
       return null;
     }
-    return entry.items;
+    return entry.data;
   }
 
-  set(key: string, items: GameListItem[]): void {
+  set(key: string, data: ListPage): void {
     this.ensureLoaded();
-    this.cache[key] = { items, fetchedAt: Date.now() };
+    this.cache[key] = { data, fetchedAt: Date.now() };
     this.persist();
   }
 

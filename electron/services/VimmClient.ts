@@ -2,20 +2,28 @@
  * VimmClient — scrapes vimm.net/vault and builds download requests.
  *
  * The vault has no public API, so we parse HTML with cheerio. Two page shapes matter:
- *   - Listing:  /vault/{code}/{letter}  -> a table of games (one <tr> per title)
- *   - Detail:   /vault/{id}             -> embeds a `let media=[{...}]` JSON blob plus
- *                                          a <form id="dl_form" action="//dlN.vimm.net/">
+ *   - List:    /vault/?p=list&mode=adv&...  -> a table of games (one <tr> per title),
+ *              paginated. Browse mode is scoped to one system (`system=`); search mode
+ *              spans every system (`q=`) and gains a leading System column.
+ *   - Detail:  /vault/{id}                  -> embeds a `let media=[{...}]` JSON blob plus
+ *                                              a <form id="dl_form" action="//dlN.vimm.net/">
  *
  * Downloading replicates the browser exactly: POST the form action with `mediaId`
  * (+ `alt` for alternate formats) and a real User-Agent + Referer header. The server
  * rejects requests missing those headers.
  *
- * Pure parsing lives in exported functions (parseListing / parseDetail) so they can be
+ * Pure parsing lives in exported functions (parseList / parseDetail) so they can be
  * unit-tested against saved HTML fixtures without any network.
  */
 import * as cheerio from 'cheerio';
-import type { GameDetail, GameListItem, MediaEntry, Region } from '@shared/types.js';
-import { sectionToPath } from '@shared/systems.js';
+import type {
+  GameDetail,
+  GameListItem,
+  ListPage,
+  ListQuery,
+  MediaEntry,
+  Region,
+} from '@shared/types.js';
 
 export const VAULT_BASE = 'https://vimm.net/vault';
 
@@ -58,97 +66,130 @@ function vaultIdFromHref(href: string): number | null {
 }
 
 // ---------------------------------------------------------------------------
-// Listing
+// Advanced list (browse + search)
 // ---------------------------------------------------------------------------
 
+/** Options controlling how a `p=list&mode=adv` results page is interpreted. */
+export interface ParseListOpts {
+  /** True for a cross-system search (`q=`); rows then carry their own System column. */
+  isSearch: boolean;
+  /** The browsed system code, applied to every row when `isSearch` is false. */
+  systemCode?: string | null;
+  /** 1-based page number this HTML represents (used to compute `hasMore`). */
+  page: number;
+}
+
 /**
- * Parse a /vault/{code}/{letter} listing page. Columns vary per console, so we read
- * the header <th> row to build a name->index map and index each data row by it.
+ * Parse a `/vault/?p=list&mode=adv&...` results page. Columns vary slightly between
+ * browse mode (no System column) and search mode (leading System column holding the
+ * system code), so we read the header <th> row to build a name->index map first.
  */
-export function parseListing(html: string): GameListItem[] {
+export function parseList(html: string, opts: ParseListOpts): ListPage {
   const $ = cheerio.load(html);
   const table = $('table.hovertable').first();
-  if (table.length === 0) return [];
-
-  // Header lives in a nested table inside the <caption>.
-  const headers: string[] = [];
-  table
-    .find('caption th')
-    .each((_, th) => {
-      headers.push($(th).text().trim().toLowerCase());
-    });
-  const col = (name: string) => headers.findIndex((h) => h.includes(name));
-
-  const idxTitle = col('title');
-  const idxRegion = col('region');
-  const idxVersion = col('version');
-  const idxLang = col('language');
-  const idxRating = col('rating');
-  const idxSize = col('size');
-  const idxSerial = col('serial');
-
   const items: GameListItem[] = [];
 
-  // Data rows are the direct <tr> of the outer table (the caption's rows are excluded
-  // because they live under <caption>, not the row body).
-  table.find('> tbody > tr, > tr').each((_, tr) => {
-    const tds = $(tr).find('> td');
-    if (tds.length === 0) return;
+  if (table.length > 0) {
+    // Header lives in a nested table inside the <caption>.
+    const headers: string[] = [];
+    table.find('caption th').each((_, th) => {
+      headers.push($(th).text().trim().toLowerCase());
+    });
+    const col = (name: string) => headers.findIndex((h) => h.includes(name));
 
-    const titleCell = idxTitle >= 0 ? tds.eq(idxTitle) : tds.first();
+    const idxSystem = col('system');
+    const idxTitle = col('title');
+    const idxRegion = col('region');
+    const idxVersion = col('version');
+    const idxLang = col('language');
+    const idxRating = col('rating');
+    const idxSize = col('size');
+    const idxSerial = col('serial');
 
-    // The real game link is the anchor whose href is a numeric /vault/{id} and not 999999.
-    let vaultId: number | null = null;
-    let title = '';
-    titleCell.find('a').each((__, a) => {
-      const href = $(a).attr('href') ?? '';
-      const id = vaultIdFromHref(href);
-      if (id !== null && vaultId === null) {
-        vaultId = id;
-        title = $(a).text().trim();
+    // Data rows are the direct <tr> of the outer table (the caption's rows are excluded
+    // because they live under <caption>, not the row body).
+    table.find('> tbody > tr, > tr').each((_, tr) => {
+      const tds = $(tr).find('> td');
+      if (tds.length === 0) return;
+
+      const titleCell = idxTitle >= 0 ? tds.eq(idxTitle) : tds.first();
+
+      // The real game link is the anchor whose href is a numeric /vault/{id} and not 999999.
+      let vaultId: number | null = null;
+      let title = '';
+      titleCell.find('a').each((__, a) => {
+        const href = $(a).attr('href') ?? '';
+        const id = vaultIdFromHref(href);
+        if (id !== null && vaultId === null) {
+          vaultId = id;
+          title = $(a).text().trim();
+        }
+      });
+      if (vaultId === null || !title) return;
+
+      // The "Unlicensed" badge is a sibling of the title anchor (never inside it), so
+      // `title` above is already clean — we just need to detect the badge here.
+      let unlicensed = false;
+      titleCell.find('b.redBorder').each((__, b) => {
+        if (($(b).attr('title') ?? '').trim().toLowerCase() === 'unlicensed') {
+          unlicensed = true;
+        }
+      });
+
+      const regions: Region[] = [];
+      if (idxRegion >= 0) {
+        tds
+          .eq(idxRegion)
+          .find('img.flag')
+          .each((__, img) => {
+            const t = $(img).attr('title');
+            if (t) regions.push(normalizeRegion(t));
+          });
       }
-    });
-    if (vaultId === null || !title) return;
 
-    const regions: Region[] = [];
-    if (idxRegion >= 0) {
-      tds
-        .eq(idxRegion)
-        .find('img.flag')
-        .each((__, img) => {
-          const t = $(img).attr('title');
-          if (t) regions.push(normalizeRegion(t));
-        });
+      const textAt = (i: number): string | null => {
+        if (i < 0) return null;
+        const t = tds.eq(i).text().trim();
+        return t.length ? t : null;
+      };
+
+      const langText = textAt(idxLang);
+      const languages = langText
+        ? langText
+            .split(/[,\s]+/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
+
+      const systemCode = opts.isSearch ? textAt(idxSystem) : (opts.systemCode ?? null);
+
+      items.push({
+        vaultId,
+        title,
+        systemCode,
+        regions,
+        version: textAt(idxVersion),
+        languages,
+        rating: textAt(idxRating),
+        sizeText: textAt(idxSize),
+        serial: textAt(idxSerial),
+        unlicensed,
+        releaseDate: null,
+      });
+    });
+  }
+
+  // Pagination: a numbered `<a href="...&page=N">N</a>` (or an enabled Next link, which
+  // points at the same N) exists whenever a further page is available.
+  const nextPageMarker = `page=${opts.page + 1}`;
+  let hasMore = false;
+  $('a[href*="page="]').each((_, a) => {
+    if (($(a).attr('href') ?? '').includes(nextPageMarker)) {
+      hasMore = true;
     }
-
-    const textAt = (i: number): string | null => {
-      if (i < 0) return null;
-      const t = tds.eq(i).text().trim();
-      return t.length ? t : null;
-    };
-
-    const langText = textAt(idxLang);
-    const languages = langText
-      ? langText
-          .split(/[,\s]+/)
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : [];
-
-    items.push({
-      vaultId,
-      title,
-      regions,
-      version: textAt(idxVersion),
-      languages,
-      rating: textAt(idxRating),
-      sizeText: textAt(idxSize),
-      serial: textAt(idxSerial),
-      releaseDate: null,
-    });
   });
 
-  return items;
+  return { items, page: opts.page, hasMore, isSearch: opts.isSearch };
 }
 
 // ---------------------------------------------------------------------------
@@ -245,16 +286,39 @@ export interface FetchDeps {
   fetchImpl?: typeof fetch;
 }
 
-export async function fetchListing(
-  systemCode: string,
-  letter: string,
-  deps: FetchDeps,
-): Promise<GameListItem[]> {
+/**
+ * Build the advanced-list URL for a query. Browse mode sends `system=`; search mode
+ * (no systemCode, a non-empty `q`) omits it and sends `q=` instead. `region` is always
+ * included — the site 404s without it.
+ */
+export function buildListUrl(query: ListQuery): string {
+  const isSearch = !query.systemCode && !!query.q;
+  const params = new URLSearchParams();
+  params.set('p', 'list');
+  params.set('mode', 'adv');
+  if (isSearch) {
+    params.set('q', query.q as string);
+  } else if (query.systemCode) {
+    params.set('system', query.systemCode);
+  }
+  params.set('region', query.regionId);
+  params.set('sort', query.sort);
+  params.set('sortOrder', query.sortOrder);
+  params.set('page', String(query.page));
+  return `${VAULT_BASE}/?${params.toString()}`;
+}
+
+export async function fetchList(query: ListQuery, deps: FetchDeps): Promise<ListPage> {
   const f = deps.fetchImpl ?? fetch;
-  const url = `${VAULT_BASE}/${systemCode}/${sectionToPath(letter)}`;
+  const isSearch = !query.systemCode && !!query.q;
+  const url = buildListUrl(query);
   const res = await f(url, { headers: { 'User-Agent': deps.userAgent } });
-  if (!res.ok) throw new Error(`Listing ${systemCode}/${letter} failed: HTTP ${res.status}`);
-  return parseListing(await res.text());
+  if (!res.ok) throw new Error(`List request failed: HTTP ${res.status}`);
+  return parseList(await res.text(), {
+    isSearch,
+    systemCode: query.systemCode ?? null,
+    page: query.page,
+  });
 }
 
 export async function fetchDetail(

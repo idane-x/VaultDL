@@ -14,13 +14,6 @@ export const EMPTY_FILTERS: ListingFilters = {
   ratedOnly: false,
 };
 
-/** Case-insensitive substring search on title. Empty/blank query returns all items. */
-export function applySearch(items: GameListItem[], query: string): GameListItem[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return items;
-  return items.filter((item) => item.title.toLowerCase().includes(q));
-}
-
 /** Apply region/version/rating filters. Empty region list means "all regions". */
 export function applyFilters(items: GameListItem[], filters: ListingFilters): GameListItem[] {
   return items.filter((item) => {
