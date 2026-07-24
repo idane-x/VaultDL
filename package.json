@@ -1,6 +1,6 @@
 {
   "name": "vimm-vault-downloader",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Desktop GUI for browsing and downloading ROMs/ISOs from Vimm's Lair Vault for personal backup and emulation.",
   "author": "",
   "license": "MIT",
