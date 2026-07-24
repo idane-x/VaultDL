@@ -1,0 +1,8 @@
+# Normalize line endings: LF in the repo, checked out native on Windows.
+* text=auto eol=lf
+
+# Binary / non-diffable
+*.ico binary
+*.png binary
+*.7z binary
+*.zip binary

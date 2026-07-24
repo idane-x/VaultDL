@@ -1,0 +1,29 @@
+appId: net.vimmvault.downloader
+productName: Vimm's Vault Downloader
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - dist-electron/**/*
+extraMetadata:
+  main: dist-electron/main.js
+asar: true
+# node-7z shells out to this binary; it must live on the real filesystem, not inside asar.
+asarUnpack:
+  - node_modules/7zip-bin/**
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  icon: build/icon.ico
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

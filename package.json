@@ -1,0 +1,46 @@
+{
+  "name": "vimm-vault-downloader",
+  "version": "0.1.0",
+  "description": "Desktop GUI for browsing and downloading ROMs/ISOs from Vimm's Lair Vault for personal backup and emulation.",
+  "author": "",
+  "license": "MIT",
+  "private": true,
+  "main": "dist-electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build && electron-builder",
+    "build:dir": "npm run typecheck && vite build && electron-builder --dir",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+  },
+  "dependencies": {
+    "7zip-bin": "^5.2.0",
+    "cheerio": "^1.0.0",
+    "electron-store": "^10.0.0",
+    "node-7z": "^3.0.0"
+  },
+  "devDependencies": {
+    "@tanstack/react-query": "^5.51.0",
+    "@types/node": "^20.14.0",
+    "@types/node-7z": "^2.1.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "electron": "^31.2.0",
+    "electron-builder": "^24.13.3",
+    "postcss": "^8.4.39",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.6",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.4",
+    "vite-plugin-electron": "^0.28.7",
+    "vite-plugin-electron-renderer": "^0.14.6",
+    "vitest": "^2.0.4",
+    "zustand": "^4.5.4"
+  }
+}
