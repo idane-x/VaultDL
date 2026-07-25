@@ -30,6 +30,7 @@ const api: VimmApi = {
   resolveFolder: (systemCode) =>
     ipcRenderer.invoke('settings:resolveFolder', systemCode) as Promise<string>,
   openFolder: (p) => ipcRenderer.invoke('shell:openFolder', p) as Promise<void>,
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url) as Promise<void>,
 
   enqueue: (item) => ipcRenderer.invoke('queue:enqueue', item) as Promise<QueueItem>,
   getQueue: () => ipcRenderer.invoke('queue:get') as Promise<QueueItem[]>,

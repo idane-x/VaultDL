@@ -210,6 +210,12 @@ export interface QueueItem {
   /** Final resolved output folder for this platform. */
   targetFolder: string;
   error: string | null;
+  /**
+   * Set when the source parked this title on a gated third-party host (1fichier & co.)
+   * instead of a direct link. The queue offers "Open in browser" so the user can complete
+   * it there — the app deliberately doesn't automate those hosts' wait timers/limits.
+   */
+  externalUrl?: string | null;
   addedAt: number;
 }
 
@@ -331,6 +337,8 @@ export interface VimmApi {
   /** Resolve the effective output folder for a system code. */
   resolveFolder(systemCode: string): Promise<string>;
   openFolder(path: string): Promise<void>;
+  /** Open a URL in the user's default browser (used for gated third-party file hosts). */
+  openExternal(url: string): Promise<void>;
 
   /**
    * Queue a download from a specific source. `sourceRef` carries whatever that provider

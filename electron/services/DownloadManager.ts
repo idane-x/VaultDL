@@ -218,6 +218,17 @@ class DownloadManagerImpl extends EventEmitter {
         { userAgent: settings.userAgent, fetchImpl: appFetch },
       );
 
+      // Some titles (notably PS4 ISOs) aren't on the source's own CDN — they're parked on a
+      // third-party host that serves an HTML landing page behind its own wait timer and
+      // free-tier limits. Driving that gate would mean automating around a deliberate access
+      // control, so we stop here and hand the user a link to finish it in their browser.
+      if (resolved.external) {
+        item.externalUrl = resolved.external.pageUrl;
+        throw new Error(
+          `Hosted on ${resolved.external.host}, not a direct link. Open it in your browser to download.`,
+        );
+      }
+
       const tempFile = this.tempPath(id);
       let existingSize = 0;
       if (resolved.supportsResume && existsSync(tempFile)) {

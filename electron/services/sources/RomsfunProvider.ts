@@ -20,9 +20,15 @@ export const RomsfunProvider: SourceProvider = {
   },
 
   async resolveDownload(ref, deps: FetchDeps): Promise<ResolvedDownload> {
-    const { url, filename, sizeBytes, refererUsed } = await fetchDownloadTarget(ref, deps);
+    const { url, filename, sizeBytes, refererUsed, externalHost } = await fetchDownloadTarget(
+      ref,
+      deps,
+    );
     return {
       url,
+      // Large titles (PS4 ISOs) are offloaded to gated file hosts rather than romsfun's own
+      // CDN. Flag it so the queue can hand off to the browser instead of failing cryptically.
+      ...(externalHost ? { external: { host: externalHost, pageUrl: refererUsed } } : {}),
       init: {
         method: 'GET',
         headers: {

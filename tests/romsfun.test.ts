@@ -6,6 +6,7 @@ import {
   parseDownloadPage,
   parseSizeText,
   fetchConsoleMap,
+  externalHostFor,
 } from '../electron/services/sources/RomsfunClient.js';
 
 const fixture = (name: string) =>
@@ -132,5 +133,48 @@ describe('parseSizeText', () => {
   it('returns null for unparseable input', () => {
     expect(parseSizeText('n/a')).toBeNull();
     expect(parseSizeText('')).toBeNull();
+  });
+});
+
+/**
+ * romsfun parks its largest titles (PS4 ISOs) on gated third-party hosts rather than its
+ * own CDN. Those serve an HTML landing page behind a wait timer / free-tier limits, and
+ * Chromium refuses them outright with ERR_BLOCKED_BY_CLIENT. Detecting this up front is
+ * what turns a cryptic network error into an actionable "open it in your browser".
+ * Fixture: the real Bloodborne (PS4) download page.
+ */
+describe('external file hosts', () => {
+  const page = parseDownloadPage(fixture('romsfun-download-page-external.html'));
+
+  it('flags a link that leaves romsfun for a gated host', () => {
+    expect(page.externalHost).toBe('1fichier.com');
+    expect(new global.URL(page.url).host).toBe('1fichier.com');
+  });
+
+  it('still parses the filename and size for display', () => {
+    expect(page.filename).toContain('Bloodborne');
+    expect(page.sizeText).toBe('31.27 GB');
+  });
+
+  it('decodes HTML entities in the href so query params survive', () => {
+    // The raw attribute contains &#038; between params; a naive regex scrape leaves them in
+    // and produces a URL whose af/token params are malformed.
+    expect(page.url).not.toContain('&#038;');
+    expect(page.url).toContain('&token=');
+  });
+
+  it('leaves direct CDN links unflagged', () => {
+    expect(parseDownloadPage(fixture('romsfun-download-page.html')).externalHost).toBeNull();
+    expect(
+      parseDownloadPage(fixture('romsfun-download-page-alt-host.html')).externalHost,
+    ).toBeNull();
+  });
+
+  it('matches subdomains but not lookalike domains', () => {
+    expect(externalHostFor('https://mega.nz/file/abc')).toBe('mega.nz');
+    expect(externalHostFor('https://cdn.mega.nz/file/abc')).toBe('mega.nz');
+    expect(externalHostFor('https://not-mega.nz.evil.com/x')).toBeNull();
+    expect(externalHostFor('https://sto.romsfast.com/a.zip')).toBeNull();
+    expect(externalHostFor('not a url')).toBeNull();
   });
 });

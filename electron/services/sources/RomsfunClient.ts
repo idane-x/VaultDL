@@ -155,6 +155,34 @@ export interface ParsedDownloadPage {
   url: string;
   filename: string | null;
   sizeText: string | null;
+  /** Set when the link leaves romsfun for a third-party file host (see EXTERNAL_HOSTS). */
+  externalHost: string | null;
+}
+
+/**
+ * File hosts romsfun offloads its largest titles to (PS4 ISOs and similar). These serve an
+ * HTML landing page behind their own wait timer / free-tier limits rather than the file, so
+ * the app hands off to the browser instead of trying to drive that gate.
+ */
+const EXTERNAL_HOSTS = [
+  '1fichier.com',
+  'mega.nz',
+  'mediafire.com',
+  'drive.google.com',
+  'gofile.io',
+  'pixeldrain.com',
+  'krakenfiles.com',
+];
+
+/** Returns the matched external host for a URL, or null when it's a direct file link. */
+export function externalHostFor(url: string): string | null {
+  let host: string;
+  try {
+    host = new URL(url).host.toLowerCase();
+  } catch {
+    return null;
+  }
+  return EXTERNAL_HOSTS.find((h) => host === h || host.endsWith('.' + h)) ?? null;
 }
 
 /**
@@ -192,7 +220,7 @@ export function parseDownloadPage(html: string): ParsedDownloadPage {
   const sizeMatch = btnText.match(/\(([^()]+)\)\s*$/);
   if (sizeMatch) sizeText = sizeMatch[1].trim();
 
-  return { url: href, filename, sizeText };
+  return { url: href, filename, sizeText, externalHost: externalHostFor(href) };
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +301,8 @@ export interface ResolvedDownloadTarget {
   sizeBytes: number | null;
   /** The download-resolution page URL — used as the `Referer` for the actual file GET. */
   refererUsed: string;
+  /** Non-null when the link leaves romsfun for a gated third-party host. */
+  externalHost: string | null;
 }
 
 /**
@@ -305,11 +335,12 @@ export async function fetchDownloadTarget(
     throw new Error(`romsfun download page request failed: HTTP ${res.status}`);
   }
 
-  const { url, filename, sizeText } = parseDownloadPage(await res.text());
+  const { url, filename, sizeText, externalHost } = parseDownloadPage(await res.text());
   return {
     url,
     filename,
     sizeBytes: sizeText ? parseSizeText(sizeText) : null,
     refererUsed: downloadPageUrl,
+    externalHost,
   };
 }

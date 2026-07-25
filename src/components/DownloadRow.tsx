@@ -46,6 +46,16 @@ export default function DownloadRow({ item, onPause, onResume, onCancel, onRemov
             {STATUS_LABEL[item.status]}
             {item.status === 'failed' && item.error ? `: ${item.error}` : ''}
           </div>
+          {/* Gated third-party hosts can't be downloaded in-app — hand off to the browser. */}
+          {item.status === 'failed' && item.externalUrl && (
+            <button
+              type="button"
+              className="mt-1 rounded border border-vault-accent px-2 py-0.5 text-xs text-vault-accent transition-colors hover:bg-vault-accent hover:text-vault-bg"
+              onClick={() => void window.vimm.openExternal(item.externalUrl as string)}
+            >
+              Open in browser
+            </button>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {item.status === 'downloading' && (

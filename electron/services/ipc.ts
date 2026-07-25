@@ -158,6 +158,15 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     if (err) throw new Error(err);
   });
 
+  ipcMain.handle('shell:openExternal', async (_e, url: string): Promise<void> => {
+    // Only ever hand http(s) links to the OS — never a file:// or custom scheme.
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new Error(`Refusing to open non-web URL: ${parsed.protocol}`);
+    }
+    await shell.openExternal(url);
+  });
+
   // -- Download queue ------------------------------------------------------
 
   ipcMain.handle(

@@ -24,6 +24,17 @@ export interface ResolvedDownload {
    * instead of restarting. (romsfun's CDN does; Vimm's does not advertise it.)
    */
   supportsResume?: boolean;
+  /**
+   * Set when the link points at a third-party file host (1fichier & co.) rather than a
+   * direct file. Those hosts serve an HTML landing page gated by their own wait timer and
+   * free-tier limits, so the app cannot — and deliberately does not try to — download them
+   * automatically. The queue surfaces this and hands off to the user's browser instead.
+   */
+  external?: {
+    host: string;
+    /** The page to open in the browser so the user can complete the download there. */
+    pageUrl: string;
+  };
 }
 
 export interface SourceProvider {

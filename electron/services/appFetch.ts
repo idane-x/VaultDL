@@ -19,9 +19,19 @@ import { net } from 'electron';
 type FetchInput = Parameters<typeof fetch>[0];
 type FetchInit = Parameters<typeof fetch>[1];
 
-export const appFetch: typeof fetch = ((input: FetchInput, init?: FetchInit) => {
+export const appFetch: typeof fetch = (async (input: FetchInput, init?: FetchInit) => {
   if (net && typeof net.fetch === 'function') {
-    return net.fetch(input as never, init as never);
+    try {
+      return await net.fetch(input as never, init as never);
+    } catch (err) {
+      // Chromium refuses some third-party file hosts outright with ERR_BLOCKED_BY_CLIENT
+      // (1fichier, for instance). Node's stack has no such objection, so fall back rather
+      // than surfacing a cryptic Chromium error. The reverse case — Cloudflare rejecting
+      // Node on TLS fingerprint — is why net.fetch is still tried first.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('ERR_BLOCKED_BY_CLIENT')) throw err;
+      return await fetch(input, init);
+    }
   }
   return fetch(input, init);
 }) as typeof fetch;
