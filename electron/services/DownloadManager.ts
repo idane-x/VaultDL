@@ -12,7 +12,15 @@
  */
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { createWriteStream, existsSync, statSync, rmSync } from 'node:fs';
+import {
+  createWriteStream,
+  existsSync,
+  statSync,
+  rmSync,
+  openSync,
+  readSync,
+  closeSync,
+} from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -52,6 +60,76 @@ function parseContentRangeTotal(header: string | null): number | null {
   if (!header) return null;
   const m = /\/(\d+)\s*$/.exec(header.trim());
   return m ? Number(m[1]) : null;
+}
+
+/** Archive extension implied by the URL's path (ignoring any `?token=` query). */
+export function extensionFromUrl(url: string): string | null {
+  try {
+    const base = path.basename(new URL(url).pathname);
+    const m = /(\.[a-z0-9]{2,4})$/i.exec(decodeURIComponent(base));
+    return m ? m[1].toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+const CONTENT_TYPE_EXT: Record<string, string> = {
+  'application/x-7z-compressed': '.7z',
+  'application/zip': '.zip',
+  'application/x-zip-compressed': '.zip',
+  'application/vnd.rar': '.rar',
+  'application/x-rar-compressed': '.rar',
+  'application/gzip': '.gz',
+};
+
+/** Archive extension implied by a Content-Type header. */
+export function extensionFromContentType(ct: string | null): string | null {
+  if (!ct) return null;
+  return CONTENT_TYPE_EXT[ct.split(';')[0].trim().toLowerCase()] ?? null;
+}
+
+/**
+ * Identify an archive by its magic bytes. 7-Zip chooses its parser from the FILE EXTENSION,
+ * so an archive saved under the wrong name fails with a bare "Is not archive" — which is
+ * exactly what happened when a 7z arrived named `.zip`. Sniffing the real format lets us
+ * correct the name before extracting.
+ */
+export function sniffArchiveExtension(filePath: string): string | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(filePath, 'r');
+    const buf = Buffer.alloc(8);
+    const read = readSync(fd, buf, 0, 8, 0);
+    if (read < 4) return null;
+    if (buf[0] === 0x37 && buf[1] === 0x7a && buf[2] === 0xbc && buf[3] === 0xaf) return '.7z';
+    if (buf[0] === 0x50 && buf[1] === 0x4b) return '.zip'; // PK
+    if (buf.subarray(0, 4).toString('latin1') === 'Rar!') return '.rar';
+    if (buf[0] === 0x1f && buf[1] === 0x8b) return '.gz';
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/** Human-readable byte count for error messages (the renderer has its own copy). */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v.toFixed(v < 10 ? 2 : 1)} ${units[i]}`;
 }
 
 class DownloadManagerImpl extends EventEmitter {
@@ -263,12 +341,18 @@ class DownloadManagerImpl extends EventEmitter {
 
       item.filename = this.resolveFilename(res, resolved);
 
+      // `expectedBytes` is ONLY set from an authoritative server header. The provider's
+      // sizeBytes is parsed from display text ("1.19 G"), so it's approximate — good enough
+      // for a progress bar, but checking a byte-exact file size against it would fail every
+      // download. Keep the two apart.
+      let expectedBytes: number | null = null;
       if (isResuming) {
-        const rangeTotal = parseContentRangeTotal(res.headers.get('content-range'));
-        item.totalBytes = rangeTotal ?? resolved.sizeBytes ?? null;
+        expectedBytes = parseContentRangeTotal(res.headers.get('content-range'));
+        item.totalBytes = expectedBytes ?? resolved.sizeBytes ?? null;
       } else {
         const totalHeader = res.headers.get('content-length');
-        item.totalBytes = totalHeader ? Number(totalHeader) : (resolved.sizeBytes ?? null);
+        expectedBytes = totalHeader ? Number(totalHeader) : null;
+        item.totalBytes = expectedBytes ?? resolved.sizeBytes ?? null;
       }
 
       await this.streamToFile(
@@ -280,6 +364,38 @@ class DownloadManagerImpl extends EventEmitter {
         isResuming,
       );
 
+      // Integrity gate. A dropped connection can end the response stream WITHOUT raising an
+      // error, leaving a short file that still looks like a clean finish. Extracting that
+      // yields a silently corrupt ROM (seen in the wild: a 481 MB track extracted from a
+      // truncated archive whose real size was 488 MB). Never hand a short file to 7-Zip.
+      const bytesOnDisk = statSync(tempFile).size;
+      if (expectedBytes !== null && bytesOnDisk !== expectedBytes) {
+        if (bytesOnDisk < expectedBytes) {
+          // Genuinely partial — keep the `.part` so the retry resumes instead of restarting.
+          throw new Error(
+            `Incomplete download: got ${formatBytes(bytesOnDisk)} of ${formatBytes(expectedBytes)} — the connection dropped`,
+          );
+        }
+        // Longer than advertised means the file is not what we think it is; start clean.
+        rmSync(tempFile, { force: true });
+        throw new Error(
+          `Corrupt download: ${formatBytes(bytesOnDisk)} exceeds the expected ${formatBytes(expectedBytes)}`,
+        );
+      }
+
+      // Last word on the format: the bytes themselves. Sources don't always label archives
+      // correctly (romsfun serves 7z files whose display name has no extension), and 7-Zip
+      // picks its parser from the extension — so a mislabelled archive fails to open even
+      // though it's perfectly valid. Correct the name here rather than at extract time so
+      // the file the user keeps on disk is right too.
+      const actualExt = sniffArchiveExtension(tempFile);
+      if (actualExt) {
+        const currentExt = path.extname(item.filename).toLowerCase();
+        if (currentExt !== actualExt) {
+          item.filename = `${item.filename.slice(0, item.filename.length - currentExt.length)}${actualExt}`;
+        }
+      }
+
       const destPath = path.join(item.targetFolder, item.filename);
       await this.moveFile(tempFile, destPath);
 
@@ -288,7 +404,17 @@ class DownloadManagerImpl extends EventEmitter {
         item.progress = 1;
         this.emitQueueChanged();
 
-        await extractArchive(destPath, item.targetFolder);
+        try {
+          await extractArchive(destPath, item.targetFolder);
+        } catch (err) {
+          // node-7z surfaces bare, contextless errors (often just a path), which told the
+          // user nothing about what actually went wrong. Keep the archive on disk so it can
+          // be opened manually rather than silently deleting evidence.
+          const reason = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `Extraction failed for ${path.basename(destPath)}: ${reason || 'the archive may be corrupt'}. The archive was kept — try extracting it manually.`,
+          );
+        }
         if (!settings.keepArchive) {
           await fsp.rm(destPath, { force: true });
         }
@@ -349,7 +475,9 @@ class DownloadManagerImpl extends EventEmitter {
 
   private isRetryable(err: unknown): boolean {
     if (!(err instanceof Error)) return false;
-    return /network|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|fetch failed|HTTP 5\d\d/i.test(
+    // "Incomplete download" is the integrity gate firing on a truncated transfer — exactly
+    // the case a Range-resume retry is designed to finish, so treat it as retryable.
+    return /network|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|fetch failed|HTTP 5\d\d|Incomplete download/i.test(
       err.message,
     );
   }
@@ -372,7 +500,13 @@ class DownloadManagerImpl extends EventEmitter {
     }
 
     const base = path.basename(resolved.filename);
-    return /\.[^./\\]+$/.test(base) ? base : `${base}.zip`;
+    if (/\.[^./\\]+$/.test(base)) return base;
+
+    // No extension in the source's display name (romsfun's "You are downloading …" heading
+    // has none). Blindly appending ".zip" used to produce a 7z archive named .zip, which
+    // 7-Zip then refused to open — it picks its parser from the extension. Take the real
+    // one from the URL path, then the content type, before falling back.
+    return `${base}${extensionFromUrl(resolved.url) ?? extensionFromContentType(res.headers.get('content-type')) ?? '.zip'}`;
   }
 
   private async streamToFile(
