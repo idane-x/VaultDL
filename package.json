@@ -1,6 +1,6 @@
 {
   "name": "vimm-vault-downloader",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Desktop GUI for browsing and downloading ROMs/ISOs from Vimm's Lair Vault for personal backup and emulation.",
   "author": "",
   "license": "MIT",
@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
     "verify:romsfun": "electron scripts/verify-romsfun.cjs",
+    "verify:downloads": "electron scripts/verify-downloads.cjs",
     "test:watch": "vitest",
     "lint": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
   },

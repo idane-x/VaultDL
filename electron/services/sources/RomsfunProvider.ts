@@ -31,10 +31,14 @@ export const RomsfunProvider: SourceProvider = {
       ...(externalHost ? { external: { host: externalHost, pageUrl: refererUsed } } : {}),
       init: {
         method: 'GET',
-        headers: {
-          'User-Agent': deps.userAgent,
-          Referer: refererUsed,
-        },
+        headers: { 'User-Agent': deps.userAgent },
+        // Deliberately NOT a `Referer` header. The CDN is a different origin from
+        // romsfun.com, and Chromium rejects a cross-origin Referer header outright
+        // (ERR_BLOCKED_BY_CLIENT) — which would push the request onto Node's stack and
+        // straight into Cloudflare's 403. Verified live: the CDN serves the file with no
+        // referer at all; the `?token=` in the URL is what authorises it. The referrer
+        // hint below is the spec-compliant form, which Chromium is happy to send.
+        referrer: refererUsed,
       },
       // Falls back to the slug if the page's "You are downloading" heading was ever
       // missing — resolveDownload should never throw on a missing filename, only on a
