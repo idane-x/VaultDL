@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { QueueItem } from '@shared/types';
+import type { QueueItem, SourceId, SourceRef } from '@shared/types';
 
 export interface UseQueueResult {
   queue: QueueItem[];
   enqueue: (item: {
+    source: SourceId;
+    sourceRef: SourceRef;
     vaultId: number;
     systemCode: string;
-    mediaId: number;
-    altIndex: number;
+    mediaId?: number;
+    altIndex?: number;
     title: string;
     filename: string;
   }) => Promise<QueueItem>;

@@ -15,10 +15,43 @@ export type Region =
   | 'World'
   | 'Other';
 
-/** One row parsed from an advanced-list (`p=list&mode=adv`) results table. */
+/** Which site a row / download came from. */
+export type SourceId = 'vimm' | 'romsfun';
+
+export const SOURCE_LABELS: Record<SourceId, string> = {
+  vimm: "Vimm's Lair",
+  romsfun: 'RomsFun',
+};
+
+/**
+ * Everything a provider needs to re-resolve a download later. Kept deliberately generic
+ * so neither source's identifiers leak into shared code:
+ *  - vimm:    { id: String(vaultId) }
+ *  - romsfun: { id: String(postId), slug, consoleSlug }
+ *
+ * romsfun CDN links carry a token that expires after a few hours, so the concrete URL is
+ * resolved at download time from this ref — never cached.
+ */
+export interface SourceRef {
+  source: SourceId;
+  id: string;
+  slug?: string;
+  consoleSlug?: string;
+  /** Index of the download variant on the source's page (romsfun `/download/{slug}-{id}/{n}`). */
+  variant?: number;
+}
+
+/** One row from a source's listing (Vimm advanced-list table, or romsfun's REST API). */
 export interface GameListItem {
-  /** The vault page id (path segment in /vault/{id}). NOTE: not the download mediaId. */
+  /**
+   * Vimm vault page id. Retained for Vimm rows (and metadata cache keys); romsfun rows
+   * set this to 0 and carry their identity in `sourceRef`.
+   */
   vaultId: number;
+  /** Which site this row came from. */
+  source: SourceId;
+  /** Everything needed to resolve this row's download later. */
+  sourceRef: SourceRef;
   title: string;
   /**
    * The system this row belongs to. In browse mode it's the browsed system; in global
@@ -53,23 +86,63 @@ export type SortOrder = 'ASC' | 'DESC';
 export interface ListQuery {
   systemCode?: string | null;
   q?: string | null;
-  /** Numeric Vimm region id as a string, e.g. '25' = USA. */
+  /**
+   * Numeric Vimm region id as a string, e.g. '25' = USA. Applies to Vimm ONLY — romsfun
+   * has no region concept (region is just text inside the title), so its rows come back
+   * unfiltered rather than being silently dropped.
+   */
   regionId: string;
   /** Sort field, e.g. 'Title' | 'Year' | 'Rating' | 'Size' | 'System'. */
   sort: string;
   sortOrder: SortOrder;
   /** 1-based page number. */
   page: number;
+  /** Which sources to query. Defaults to every enabled source. */
+  sources?: SourceId[];
 }
 
-/** One page of advanced-list results. */
+/** One page of results from a SINGLE source. */
 export interface ListPage {
   items: GameListItem[];
   page: number;
-  /** True when a next page exists (a further `page=` link is present). */
+  /** True when a next page exists (a further `page=` link / page number is available). */
   hasMore: boolean;
   /** True when this was a cross-system search (rows carry their own systemCode). */
   isSearch: boolean;
+}
+
+/**
+ * One row of the merged catalog: the same game as offered by one or both sources.
+ * Rows only merge when the normalized titles match strongly AND the system agrees —
+ * when in doubt they stay separate, because a duplicate row is a far better failure
+ * than downloading the wrong game.
+ */
+export interface MergedRow {
+  /** Stable identity for React keys, queue lookups and metadata caching. */
+  key: string;
+  /** Display title (taken from the first source that has the row). */
+  title: string;
+  systemCode: string | null;
+  regions: Region[];
+  version: string | null;
+  languages: string[];
+  rating: string | null;
+  sizeText: string | null;
+  unlicensed: boolean;
+  releaseDate: string | null;
+  /** The per-source rows backing this entry; a missing key means that source lacks it. */
+  sources: Partial<Record<SourceId, GameListItem>>;
+}
+
+/** One page of the merged catalog, tracking each source's pagination independently. */
+export interface MergedPage {
+  rows: MergedRow[];
+  page: number;
+  /** Per-source "another page exists" flags; the UI loads more while any is true. */
+  hasMore: Partial<Record<SourceId, boolean>>;
+  isSearch: boolean;
+  /** Sources that failed this request (surfaced in the UI without killing the whole list). */
+  errors?: Partial<Record<SourceId, string>>;
 }
 
 /** A downloadable media entry from the detail page's embedded `media` JSON blob. */
@@ -114,11 +187,17 @@ export type QueueStatus =
 /** A queued/active/finished download as the UI sees it. */
 export interface QueueItem {
   id: string;
+  /** Which site this download comes from. */
+  source: SourceId;
+  /** Everything needed to (re-)resolve the concrete download URL at start time. */
+  sourceRef: SourceRef;
+  /** Vimm vault id; 0 for rows that came from another source. */
   vaultId: number;
   systemCode: string;
-  mediaId: number;
-  /** disc/format index into GameDetail.media that was chosen. */
-  altIndex: number;
+  /** Vimm-only: the media id POSTed to the download host. */
+  mediaId?: number;
+  /** Vimm-only: disc/format index into GameDetail.media that was chosen. */
+  altIndex?: number;
   title: string;
   filename: string;
   status: QueueStatus;
@@ -208,6 +287,8 @@ export interface Settings {
   tgdbApiKey: string | null;
   /** RAWG API key (Metacritic score). Empty/null disables score lookups. */
   rawgApiKey: string | null;
+  /** Per-source enable toggles; a disabled source is never queried and shows no column. */
+  enabledSources: Record<SourceId, boolean>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -223,6 +304,7 @@ export const DEFAULT_SETTINGS: Settings = {
   metadataEnabled: true,
   tgdbApiKey: null,
   rawgApiKey: null,
+  enabledSources: { vimm: true, romsfun: true },
 };
 
 /** Result of a folder-picker dialog. */
@@ -240,7 +322,7 @@ export interface VimmApi {
    * Fetch one page of the advanced list — browse a console (`query.systemCode`) or search
    * across all of them (`query.q`). See ListQuery. Cached per full query in main.
    */
-  getList(query: ListQuery, force?: boolean): Promise<ListPage>;
+  getList(query: ListQuery, force?: boolean): Promise<MergedPage>;
   getDetail(vaultId: number, systemCode: string): Promise<GameDetail>;
 
   getSettings(): Promise<Settings>;
@@ -250,11 +332,17 @@ export interface VimmApi {
   resolveFolder(systemCode: string): Promise<string>;
   openFolder(path: string): Promise<void>;
 
+  /**
+   * Queue a download from a specific source. `sourceRef` carries whatever that provider
+   * needs to resolve the concrete URL when the download actually starts.
+   */
   enqueue(item: {
+    source: SourceId;
+    sourceRef: SourceRef;
     vaultId: number;
     systemCode: string;
-    mediaId: number;
-    altIndex: number;
+    mediaId?: number;
+    altIndex?: number;
     title: string;
     filename: string;
   }): Promise<QueueItem>;

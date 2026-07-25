@@ -1,18 +1,25 @@
-import type { GameListItem, MetaLookup } from '@shared/types';
+import type { MergedRow, MetaLookup, SourceId } from '@shared/types';
+import { SOURCE_LABELS } from '@shared/types';
 import { SYSTEM_BY_CODE } from '@shared/systems';
 import GameCover from './GameCover';
 import { regionFlagEmoji } from '../lib/format';
 
+const SHORT_SOURCE_LABEL: Record<SourceId, string> = { vimm: 'Vimm', romsfun: 'RomsFun' };
+
+const SOURCE_ORDER: SourceId[] = ['vimm', 'romsfun'];
+
 export interface GameGridProps {
-  items: GameListItem[];
+  rows: MergedRow[];
   isLoading: boolean;
   /** Show a small system badge on each card — enabled in global search mode. */
   showSystem: boolean;
   metadataEnabled: boolean;
-  onAdd: (item: GameListItem) => void;
+  /** Which sources have a visible footer button — a disabled source is hidden entirely. */
+  enabledSources: Record<SourceId, boolean>;
+  onAdd: (row: MergedRow, source: SourceId) => void;
   onOpenOverride: (lookup: MetaLookup) => void;
-  /** vaultIds currently present in the download queue, to disable/relabel the button. */
-  queuedVaultIds?: Set<number>;
+  /** `${source}:${sourceRef.id}` keys currently present in the download queue. */
+  queuedKeys: Set<string>;
 }
 
 function systemLabel(systemCode: string | null): string {
@@ -20,16 +27,65 @@ function systemLabel(systemCode: string | null): string {
   return SYSTEM_BY_CODE[systemCode]?.label ?? systemCode;
 }
 
-/** Box-art gallery view of a listing: responsive card grid with cover, title, regions, score, download. */
+function SourceButton({
+  row,
+  source,
+  queuedKeys,
+  onAdd,
+}: {
+  row: MergedRow;
+  source: SourceId;
+  queuedKeys: Set<string>;
+  onAdd: (row: MergedRow, source: SourceId) => void;
+}) {
+  const item = row.sources[source];
+  if (!item) {
+    return (
+      <span
+        className="flex-1 rounded-md bg-vault-panel px-2 py-1 text-center text-xs text-vault-muted"
+        aria-label={`Not available on ${SOURCE_LABELS[source]}`}
+        title={`Not available on ${SOURCE_LABELS[source]}`}
+      >
+        —
+      </span>
+    );
+  }
+
+  const key = `${source}:${item.sourceRef.id}`;
+  const queued = queuedKeys.has(key);
+  const unavailable = row.systemCode === null;
+  const disabled = queued || unavailable;
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      title={unavailable ? 'Unknown system — cannot download' : SHORT_SOURCE_LABEL[source]}
+      onClick={() => onAdd(row, source)}
+      className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+        disabled
+          ? 'cursor-not-allowed bg-vault-panel text-vault-muted'
+          : 'bg-vault-accent text-vault-bg hover:brightness-110'
+      }`}
+    >
+      {queued ? 'Queued' : unavailable ? 'Unavailable' : SHORT_SOURCE_LABEL[source]}
+    </button>
+  );
+}
+
+/** Box-art gallery view of a listing: responsive card grid with cover, title, regions, score, per-source download. */
 export default function GameGrid({
-  items,
+  rows,
   isLoading,
   showSystem,
   metadataEnabled,
+  enabledSources,
   onAdd,
   onOpenOverride,
-  queuedVaultIds,
+  queuedKeys,
 }: GameGridProps) {
+  const sourceIds = SOURCE_ORDER.filter((s) => enabledSources[s]);
+
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-vault-muted">
@@ -38,7 +94,7 @@ export default function GameGrid({
     );
   }
 
-  if (items.length === 0) {
+  if (rows.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 text-vault-muted">
         <span className="text-3xl">📭</span>
@@ -50,16 +106,13 @@ export default function GameGrid({
   return (
     <div className="flex-1 overflow-auto p-4">
       <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-4">
-        {items.map((item) => {
-          const queued = queuedVaultIds?.has(item.vaultId) ?? false;
-          const hasSystem = item.systemCode !== null;
-          const lookup: MetaLookup | null = item.systemCode
-            ? { vaultId: item.vaultId, systemCode: item.systemCode, title: item.title }
+        {rows.map((row) => {
+          const lookup: MetaLookup | null = row.systemCode
+            ? { vaultId: row.sources.vimm?.vaultId ?? 0, systemCode: row.systemCode, title: row.title }
             : null;
-          const downloadDisabled = queued || !hasSystem;
           return (
             <div
-              key={item.vaultId}
+              key={row.key}
               className="flex flex-col overflow-hidden rounded-lg border border-vault-border bg-vault-panel2 transition-colors hover:border-vault-accent/50"
             >
               <div className="relative">
@@ -71,24 +124,24 @@ export default function GameGrid({
                 />
                 {showSystem && (
                   <span className="absolute start-1 top-1 rounded bg-vault-bg/80 px-1.5 py-0.5 text-[10px] font-medium text-vault-text backdrop-blur">
-                    {systemLabel(item.systemCode)}
+                    {systemLabel(row.systemCode)}
                   </span>
                 )}
               </div>
               <div className="flex flex-1 flex-col gap-1.5 p-2.5">
                 <p
                   className="line-clamp-2 min-h-[2.25rem] text-xs font-medium text-vault-text"
-                  title={item.title}
+                  title={row.title}
                 >
-                  {item.title}
+                  {row.title}
                 </p>
                 <div className="flex items-center gap-1">
-                  {item.regions.length > 0 ? (
+                  {row.regions.length > 0 ? (
                     <span
                       className="inline-flex items-center gap-1 text-xs"
-                      title={item.regions.join(', ')}
+                      title={row.regions.join(', ')}
                     >
-                      {item.regions.map((r) => (
+                      {row.regions.map((r) => (
                         <span key={r}>{regionFlagEmoji(r)}</span>
                       ))}
                     </span>
@@ -96,19 +149,17 @@ export default function GameGrid({
                     <span className="text-xs text-vault-muted">—</span>
                   )}
                 </div>
-                <button
-                  type="button"
-                  disabled={downloadDisabled}
-                  title={!hasSystem ? 'Unknown system — cannot download' : undefined}
-                  onClick={() => onAdd(item)}
-                  className={`mt-auto rounded-md px-2 py-1 text-xs font-medium transition-colors ${
-                    downloadDisabled
-                      ? 'cursor-not-allowed bg-vault-panel text-vault-muted'
-                      : 'bg-vault-accent text-vault-bg hover:brightness-110'
-                  }`}
-                >
-                  {queued ? 'Queued' : !hasSystem ? 'Unavailable' : 'Download'}
-                </button>
+                <div className="mt-auto flex gap-1.5">
+                  {sourceIds.map((source) => (
+                    <SourceButton
+                      key={source}
+                      row={row}
+                      source={source}
+                      queuedKeys={queuedKeys}
+                      onAdd={onAdd}
+                    />
+                  ))}
+                </div>
               </div>
             </div>
           );

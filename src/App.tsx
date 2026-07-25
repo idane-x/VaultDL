@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { GameListItem, MetaLookup, SortOrder } from '@shared/types';
+import type { MergedRow, MetaLookup, SortOrder, SourceId } from '@shared/types';
+import { SOURCE_LABELS } from '@shared/types';
 import { DEFAULT_REGION_ID, DEFAULT_SORT, DEFAULT_SORT_ORDER } from '@shared/vault-filters';
 import Sidebar from './components/Sidebar';
 import SearchBox from './components/SearchBox';
@@ -29,6 +30,8 @@ const MIN_SEARCH_LENGTH = 3;
 /** Debounce delay before a search-box keystroke turns into a request. */
 const SEARCH_DEBOUNCE_MS = 350;
 
+const SOURCE_ORDER: SourceId[] = ['vimm', 'romsfun'];
+
 export default function App() {
   const [selectedSystemCode, setSelectedSystemCode] = useState<string>('SNES');
   const [searchInput, setSearchInput] = useState('');
@@ -38,7 +41,7 @@ export default function App() {
   const [sort, setSort] = useState<string>(DEFAULT_SORT);
   const [sortOrder, setSortOrder] = useState<SortOrder>(DEFAULT_SORT_ORDER);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [addingVaultId, setAddingVaultId] = useState<number | null>(null);
+  const [addingKey, setAddingKey] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>('table');
   const [overrideLookup, setOverrideLookup] = useState<MetaLookup | null>(null);
 
@@ -55,31 +58,46 @@ export default function App() {
   const trimmedSearch = debouncedSearch.trim();
   const searchMode = trimmedSearch.length >= MIN_SEARCH_LENGTH;
 
+  const enabledSourceIds = useMemo(
+    () => SOURCE_ORDER.filter((s) => settings.enabledSources[s]),
+    [settings.enabledSources],
+  );
+
   const {
-    items,
+    rows,
     isLoading,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
     isSearch,
+    errors: listErrors,
   } = useVaultList({
     systemCode: searchMode ? null : selectedSystemCode,
     q: searchMode ? trimmedSearch : null,
     regionId,
     sort,
     sortOrder,
+    sources: enabledSourceIds,
   });
 
   const selectedSystem = SYSTEM_BY_CODE[selectedSystemCode];
 
-  const availableRegions = useMemo(() => collectRegions(items), [items]);
+  const availableRegions = useMemo(() => collectRegions(rows), [rows]);
 
-  const visibleItems = useMemo(() => applyFilters(items, filters), [items, filters]);
+  const visibleRows = useMemo(() => applyFilters(rows, filters), [rows, filters]);
 
-  const queuedVaultIds = useMemo(() => new Set(queue.map((q) => q.vaultId)), [queue]);
+  const queuedKeys = useMemo(
+    () => new Set(queue.map((q) => `${q.source}:${q.sourceRef.id}`)),
+    [queue],
+  );
 
   const showMetaKeyBanner =
     settings.metadataEnabled && !settings.tgdbApiKey?.trim() && !settings.rawgApiKey?.trim();
+
+  const sourceErrorEntries = useMemo(
+    () => Object.entries(listErrors) as [SourceId, string][],
+    [listErrors],
+  );
 
   const handleSelectSystem = (code: string) => {
     setSelectedSystemCode(code);
@@ -88,36 +106,55 @@ export default function App() {
     setFilters(EMPTY_FILTERS);
   };
 
-  const handleAdd = async (item: GameListItem) => {
-    if (addingVaultId !== null) return;
+  const handleAdd = async (row: MergedRow, source: SourceId) => {
+    if (addingKey !== null) return;
+    const item = row.sources[source];
+    if (!item) return;
+
     const systemCode = item.systemCode;
     if (!systemCode) {
       pushToast({
         variant: 'error',
-        message: `Can't download "${item.title}" — its system couldn't be determined.`,
+        message: `Can't download "${row.title}" — its system couldn't be determined.`,
       });
       return;
     }
 
-    setAddingVaultId(item.vaultId);
+    const key = `${source}:${item.sourceRef.id}`;
+    setAddingKey(key);
     try {
-      const detail = await window.vimm.getDetail(item.vaultId, systemCode);
-      const media = detail.media[0];
-      if (!media) {
-        pushToast({
-          variant: 'error',
-          message: `No downloadable file found for "${item.title}".`,
+      if (source === 'vimm') {
+        const detail = await window.vimm.getDetail(item.vaultId, systemCode);
+        const media = detail.media[0];
+        if (!media) {
+          pushToast({
+            variant: 'error',
+            message: `No downloadable file found for "${row.title}".`,
+          });
+          return;
+        }
+        await enqueue({
+          source,
+          sourceRef: item.sourceRef,
+          vaultId: item.vaultId,
+          systemCode,
+          mediaId: media.mediaId,
+          altIndex: 0,
+          title: row.title,
+          filename: media.filename,
         });
-        return;
+      } else {
+        // romsfun has no detail endpoint — the backend resolves the concrete URL at
+        // download time from sourceRef, so there's no getDetail step here.
+        await enqueue({
+          source,
+          sourceRef: item.sourceRef,
+          vaultId: item.vaultId,
+          systemCode,
+          title: row.title,
+          filename: item.title,
+        });
       }
-      await enqueue({
-        vaultId: item.vaultId,
-        systemCode,
-        mediaId: media.mediaId,
-        altIndex: 0,
-        title: item.title,
-        filename: media.filename,
-      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const noFolderConfigured =
@@ -134,11 +171,11 @@ export default function App() {
       } else {
         pushToast({
           variant: 'error',
-          message: `Failed to add "${item.title}": ${message}`,
+          message: `Failed to add "${row.title}": ${message}`,
         });
       }
     } finally {
-      setAddingVaultId(null);
+      setAddingKey(null);
     }
   };
 
@@ -150,6 +187,7 @@ export default function App() {
         selectedSystemCode={selectedSystemCode}
         onSelectSystem={handleSelectSystem}
         onOpenSettings={() => setSettingsOpen(true)}
+        enabledSources={settings.enabledSources}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
@@ -159,7 +197,7 @@ export default function App() {
               {searchMode ? `Search: "${trimmedSearch}"` : (selectedSystem?.label ?? selectedSystemCode)}
             </h1>
             <p className="text-xs text-vault-muted">
-              {visibleItems.length} of {items.length} loaded
+              {visibleRows.length} of {rows.length} loaded
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -206,31 +244,43 @@ export default function App() {
           <MetaKeyBanner onOpenSettings={() => setSettingsOpen(true)} />
         )}
 
+        {sourceErrorEntries.length > 0 && (
+          <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-500">
+            {sourceErrorEntries.map(([source, message]) => (
+              <div key={source}>
+                {SOURCE_LABELS[source]} is unavailable right now ({message}).
+              </div>
+            ))}
+          </div>
+        )}
+
         {view === 'table' ? (
           <GameTable
-            items={visibleItems}
+            rows={visibleRows}
             isLoading={isLoading}
             showSystem={isSearch}
             metadataEnabled={settings.metadataEnabled}
+            enabledSources={settings.enabledSources}
             onAdd={handleAdd}
             onOpenOverride={setOverrideLookup}
-            queuedVaultIds={queuedVaultIds}
+            queuedKeys={queuedKeys}
           />
         ) : (
           <GameGrid
-            items={visibleItems}
+            rows={visibleRows}
             isLoading={isLoading}
             showSystem={isSearch}
             metadataEnabled={settings.metadataEnabled}
+            enabledSources={settings.enabledSources}
             onAdd={handleAdd}
             onOpenOverride={setOverrideLookup}
-            queuedVaultIds={queuedVaultIds}
+            queuedKeys={queuedKeys}
           />
         )}
 
         {!isLoading && (
           <ListFooter
-            totalLoaded={items.length}
+            totalLoaded={rows.length}
             hasNextPage={hasNextPage}
             isFetchingNextPage={isFetchingNextPage}
             onLoadMore={fetchNextPage}

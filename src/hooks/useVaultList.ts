@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
-import type { GameListItem, ListPage, ListQuery, SortOrder } from '@shared/types';
+import type { ListQuery, MergedPage, MergedRow, SortOrder, SourceId } from '@shared/types';
 
 export interface VaultListParams {
   /** Console to browse. Ignored (and should be null) when `q` is set — search spans consoles. */
@@ -10,11 +10,13 @@ export interface VaultListParams {
   regionId: string;
   sort: string;
   sortOrder: SortOrder;
+  /** Enabled sources to query — also included in the query key so toggling a source refetches. */
+  sources: SourceId[];
 }
 
 export interface UseVaultListResult {
-  /** All pages fetched so far, flattened in order. */
-  items: GameListItem[];
+  /** All pages fetched so far, flattened in order. Each row may carry one or both sources. */
+  rows: MergedRow[];
   isLoading: boolean;
   isFetching: boolean;
   isFetchingNextPage: boolean;
@@ -24,53 +26,66 @@ export interface UseVaultListResult {
   fetchNextPage: () => void;
   /** True once we know this is a cross-system search (rows carry their own systemCode). */
   isSearch: boolean;
+  /** Per-source error messages from the most recently fetched page, if any source failed. */
+  errors: Partial<Record<SourceId, string>>;
 }
 
 /**
- * Fetches Vimm's advanced-list results via window.vimm.getList, paginated with
- * react-query's useInfiniteQuery. Browse mode (systemCode set) and search mode (q set,
- * >=3 chars) are mutually exclusive — the caller decides which by what it passes in.
+ * Fetches the merged catalog via window.vimm.getList, paginated with react-query's
+ * useInfiniteQuery. Browse mode (systemCode set) and search mode (q set, >=3 chars) are
+ * mutually exclusive — the caller decides which by what it passes in.
  *
- * Keyed by ['list', systemCode-or-q, regionId, sort, sortOrder] so switching any control
- * (system, search term, region, sort, order) starts a fresh paginated result set.
+ * Keyed by ['list', systemCode-or-q, regionId, sort, sortOrder, sources] so switching any
+ * control (system, search term, region, sort, order, or which sources are enabled) starts a
+ * fresh paginated result set.
  */
 export function useVaultList(params: VaultListParams): UseVaultListResult {
-  const { systemCode, q, regionId, sort, sortOrder } = params;
+  const { systemCode, q, regionId, sort, sortOrder, sources } = params;
   const searching = Boolean(q);
-  const enabled = searching ? true : Boolean(systemCode);
+  const enabled = (searching ? true : Boolean(systemCode)) && sources.length > 0;
+
+  const sourcesKey = useMemo(() => sources.slice().sort().join(','), [sources]);
 
   const queryKey = useMemo(
-    () => ['list', searching ? `q:${q}` : `sys:${systemCode}`, regionId, sort, sortOrder] as const,
-    [searching, q, systemCode, regionId, sort, sortOrder],
+    () =>
+      ['list', searching ? `q:${q}` : `sys:${systemCode}`, regionId, sort, sortOrder, sourcesKey] as const,
+    [searching, q, systemCode, regionId, sort, sortOrder, sourcesKey],
   );
 
   const query = useInfiniteQuery({
     queryKey,
-    queryFn: ({ pageParam }): Promise<ListPage> => {
+    queryFn: ({ pageParam }): Promise<MergedPage> => {
       const query: ListQuery = searching
-        ? { q, regionId, sort, sortOrder, page: pageParam }
-        : { systemCode, regionId, sort, sortOrder, page: pageParam };
+        ? { q, regionId, sort, sortOrder, page: pageParam, sources }
+        : { systemCode, regionId, sort, sortOrder, page: pageParam, sources };
       return window.vimm.getList(query);
     },
     initialPageParam: 1,
-    getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.page + 1 : undefined),
+    getNextPageParam: (lastPage) =>
+      Object.values(lastPage.hasMore).some(Boolean) ? lastPage.page + 1 : undefined,
     enabled,
     staleTime: 5 * 60 * 1000,
   });
 
-  const items = useMemo(
-    () => query.data?.pages.flatMap((p) => p.items) ?? [],
+  const rows = useMemo(
+    () => query.data?.pages.flatMap((p) => p.rows) ?? [],
     [query.data],
   );
 
   const isSearch = query.data?.pages[0]?.isSearch ?? searching;
+
+  const errors = useMemo(() => {
+    const pages = query.data?.pages;
+    if (!pages || pages.length === 0) return {};
+    return pages[pages.length - 1].errors ?? {};
+  }, [query.data]);
 
   const fetchNextPage = useCallback(() => {
     void query.fetchNextPage();
   }, [query]);
 
   return {
-    items,
+    rows,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
     isFetchingNextPage: query.isFetchingNextPage,
@@ -79,5 +94,6 @@ export function useVaultList(params: VaultListParams): UseVaultListResult {
     hasNextPage: query.hasNextPage ?? false,
     fetchNextPage,
     isSearch,
+    errors,
   };
 }

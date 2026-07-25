@@ -3,8 +3,8 @@ import type {
   DownloadProgress,
   GameDetail,
   GameMeta,
-  ListPage,
   ListQuery,
+  MergedPage,
   MetaLookup,
   PickFolderResult,
   QueueItem,
@@ -19,7 +19,7 @@ import type {
  */
 const api: VimmApi = {
   getList: (query: ListQuery, force?: boolean) =>
-    ipcRenderer.invoke('vault:getList', query, force) as Promise<ListPage>,
+    ipcRenderer.invoke('vault:getList', query, force) as Promise<MergedPage>,
   getDetail: (vaultId, systemCode) =>
     ipcRenderer.invoke('vault:getDetail', vaultId, systemCode) as Promise<GameDetail>,
 

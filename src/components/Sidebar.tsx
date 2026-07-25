@@ -1,10 +1,24 @@
-import { SYSTEMS } from '@shared/systems';
-import type { VaultSystem } from '@shared/systems';
+import { useMemo } from 'react';
+import { CATEGORY_LABELS, SYSTEMS } from '@shared/systems';
+import type { SystemCategory, VaultSystem } from '@shared/systems';
+import type { SourceId } from '@shared/types';
 
 export interface SidebarProps {
   selectedSystemCode: string | null;
   onSelectSystem: (code: string) => void;
   onOpenSettings: () => void;
+  /** Systems whose sources are ALL disabled are hidden from the list entirely. */
+  enabledSources: Record<SourceId, boolean>;
+}
+
+const CATEGORY_ORDER = Object.keys(CATEGORY_LABELS) as SystemCategory[];
+
+const SOURCE_BADGE: Record<SourceId, string> = { vimm: 'V', romsfun: 'RF' };
+
+/** Badge shown next to a system that's only available from a single source, or null otherwise. */
+function singleSourceBadge(sys: VaultSystem): string | null {
+  if (sys.sources.length !== 1) return null;
+  return SOURCE_BADGE[sys.sources[0]];
 }
 
 function SystemGroup({
@@ -26,19 +40,28 @@ function SystemGroup({
       <ul>
         {systems.map((sys) => {
           const active = sys.code === selectedSystemCode;
+          const badge = singleSourceBadge(sys);
           return (
             <li key={sys.code}>
               <button
                 type="button"
                 onClick={() => onSelectSystem(sys.code)}
-                className={`w-full truncate rounded-md px-3 py-1.5 text-left text-sm transition-colors ${
+                className={`flex w-full items-center justify-between gap-1.5 truncate rounded-md px-3 py-1.5 text-left text-sm transition-colors ${
                   active
                     ? 'bg-vault-accent/15 text-vault-text font-medium ring-1 ring-vault-accent/40'
                     : 'text-vault-muted hover:bg-vault-panel2 hover:text-vault-text'
                 }`}
                 title={sys.label}
               >
-                {sys.label}
+                <span className="truncate">{sys.label}</span>
+                {badge && (
+                  <span
+                    className="shrink-0 rounded bg-vault-panel2 px-1 py-0.5 text-[9px] font-semibold leading-none text-vault-muted"
+                    title={`${sys.label} is only available from ${sys.sources[0] === 'romsfun' ? 'RomsFun' : "Vimm's Lair"}`}
+                  >
+                    {badge}
+                  </span>
+                )}
               </button>
             </li>
           );
@@ -53,9 +76,12 @@ export default function Sidebar({
   selectedSystemCode,
   onSelectSystem,
   onOpenSettings,
+  enabledSources,
 }: SidebarProps) {
-  const home = SYSTEMS.filter((s) => s.category === 'home');
-  const handheld = SYSTEMS.filter((s) => s.category === 'handheld');
+  const visibleSystems = useMemo(
+    () => SYSTEMS.filter((s) => s.sources.some((src) => enabledSources[src])),
+    [enabledSources],
+  );
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-e border-vault-border bg-vault-panel">
@@ -75,18 +101,19 @@ export default function Sidebar({
         </button>
       </div>
       <div className="flex-1 overflow-y-auto px-1 pb-3">
-        <SystemGroup
-          title="Home"
-          systems={home}
-          selectedSystemCode={selectedSystemCode}
-          onSelectSystem={onSelectSystem}
-        />
-        <SystemGroup
-          title="Handheld"
-          systems={handheld}
-          selectedSystemCode={selectedSystemCode}
-          onSelectSystem={onSelectSystem}
-        />
+        {CATEGORY_ORDER.map((category) => {
+          const systems = visibleSystems.filter((s) => s.category === category);
+          if (systems.length === 0) return null;
+          return (
+            <SystemGroup
+              key={category}
+              title={CATEGORY_LABELS[category]}
+              systems={systems}
+              selectedSystemCode={selectedSystemCode}
+              onSelectSystem={onSelectSystem}
+            />
+          );
+        })}
       </div>
     </aside>
   );

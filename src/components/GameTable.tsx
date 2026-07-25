@@ -1,18 +1,26 @@
-import type { GameListItem, MetaLookup } from '@shared/types';
+import type { GameListItem, MergedRow, MetaLookup, SourceId } from '@shared/types';
+import { SOURCE_LABELS } from '@shared/types';
 import { SYSTEM_BY_CODE } from '@shared/systems';
 import GameCover from './GameCover';
 import { regionFlagEmoji } from '../lib/format';
 
+/** Short column/button labels — SOURCE_LABELS full names ("Vimm's Lair") are too long for a header. */
+const SHORT_SOURCE_LABEL: Record<SourceId, string> = { vimm: 'Vimm', romsfun: 'RomsFun' };
+
+const SOURCE_ORDER: SourceId[] = ['vimm', 'romsfun'];
+
 export interface GameTableProps {
-  items: GameListItem[];
+  rows: MergedRow[];
   isLoading: boolean;
   /** Show a System column — enabled in global search mode where rows span consoles. */
   showSystem: boolean;
   metadataEnabled: boolean;
-  onAdd: (item: GameListItem) => void;
+  /** Which sources have a visible column — a disabled source's column is hidden entirely. */
+  enabledSources: Record<SourceId, boolean>;
+  onAdd: (row: MergedRow, source: SourceId) => void;
   onOpenOverride: (lookup: MetaLookup) => void;
-  /** vaultIds currently present in the download queue, to disable/relabel the button. */
-  queuedVaultIds?: Set<number>;
+  /** `${source}:${sourceRef.id}` keys currently present in the download queue. */
+  queuedKeys: Set<string>;
 }
 
 function RegionCell({ regions }: { regions: GameListItem['regions'] }) {
@@ -31,16 +39,65 @@ function systemLabel(systemCode: string | null): string {
   return SYSTEM_BY_CODE[systemCode]?.label ?? systemCode;
 }
 
-/** Renders a listing as a table with a per-row download action. Handles loading/empty states. */
+function SourceCell({
+  row,
+  source,
+  queuedKeys,
+  onAdd,
+}: {
+  row: MergedRow;
+  source: SourceId;
+  queuedKeys: Set<string>;
+  onAdd: (row: MergedRow, source: SourceId) => void;
+}) {
+  const item = row.sources[source];
+  if (!item) {
+    return (
+      <span
+        className="text-vault-muted"
+        aria-label={`Not available on ${SOURCE_LABELS[source]}`}
+        title={`Not available on ${SOURCE_LABELS[source]}`}
+      >
+        —
+      </span>
+    );
+  }
+
+  const key = `${source}:${item.sourceRef.id}`;
+  const queued = queuedKeys.has(key);
+  const unavailable = row.systemCode === null;
+  const disabled = queued || unavailable;
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      title={unavailable ? 'Unknown system — cannot download' : undefined}
+      onClick={() => onAdd(row, source)}
+      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+        disabled
+          ? 'cursor-not-allowed bg-vault-panel2 text-vault-muted'
+          : 'bg-vault-accent text-vault-bg hover:brightness-110'
+      }`}
+    >
+      {queued ? 'Queued' : unavailable ? 'Unavailable' : 'Download'}
+    </button>
+  );
+}
+
+/** Renders a listing as a table with a per-row, per-source download action. Handles loading/empty states. */
 export default function GameTable({
-  items,
+  rows,
   isLoading,
   showSystem,
   metadataEnabled,
+  enabledSources,
   onAdd,
   onOpenOverride,
-  queuedVaultIds,
+  queuedKeys,
 }: GameTableProps) {
+  const sourceIds = SOURCE_ORDER.filter((s) => enabledSources[s]);
+
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-vault-muted">
@@ -49,7 +106,7 @@ export default function GameTable({
     );
   }
 
-  if (items.length === 0) {
+  if (rows.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 text-vault-muted">
         <span className="text-3xl">📭</span>
@@ -71,20 +128,21 @@ export default function GameTable({
             <th className="px-3 py-2 text-start font-medium">Languages</th>
             <th className="px-3 py-2 text-start font-medium">Rating</th>
             <th className="px-3 py-2 text-start font-medium">Size</th>
-            <th className="px-3 py-2" />
+            {sourceIds.map((source) => (
+              <th key={source} className="px-3 py-2 text-end font-medium">
+                {SHORT_SOURCE_LABEL[source]}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          {items.map((item) => {
-            const queued = queuedVaultIds?.has(item.vaultId) ?? false;
-            const hasSystem = item.systemCode !== null;
-            const lookup: MetaLookup | null = item.systemCode
-              ? { vaultId: item.vaultId, systemCode: item.systemCode, title: item.title }
+          {rows.map((row) => {
+            const lookup: MetaLookup | null = row.systemCode
+              ? { vaultId: row.sources.vimm?.vaultId ?? 0, systemCode: row.systemCode, title: row.title }
               : null;
-            const downloadDisabled = queued || !hasSystem;
             return (
               <tr
-                key={item.vaultId}
+                key={row.key}
                 className="border-b border-vault-border/60 transition-colors hover:bg-vault-panel2"
               >
                 <td className="px-3 py-2">
@@ -95,36 +153,26 @@ export default function GameTable({
                     variant="row"
                   />
                 </td>
-                <td className="max-w-[22rem] truncate px-3 py-2 text-vault-text" title={item.title}>
-                  {item.title}
+                <td className="max-w-[22rem] truncate px-3 py-2 text-vault-text" title={row.title}>
+                  {row.title}
                 </td>
                 {showSystem && (
-                  <td className="px-3 py-2 text-vault-muted">{systemLabel(item.systemCode)}</td>
+                  <td className="px-3 py-2 text-vault-muted">{systemLabel(row.systemCode)}</td>
                 )}
                 <td className="px-3 py-2">
-                  <RegionCell regions={item.regions} />
+                  <RegionCell regions={row.regions} />
                 </td>
-                <td className="px-3 py-2 text-vault-muted">{item.version ?? '—'}</td>
+                <td className="px-3 py-2 text-vault-muted">{row.version ?? '—'}</td>
                 <td className="max-w-[10rem] truncate px-3 py-2 text-vault-muted">
-                  {item.languages.length > 0 ? item.languages.join(', ') : '—'}
+                  {row.languages.length > 0 ? row.languages.join(', ') : '—'}
                 </td>
-                <td className="px-3 py-2 text-vault-muted">{item.rating ?? '—'}</td>
-                <td className="px-3 py-2 text-vault-muted">{item.sizeText ?? '—'}</td>
-                <td className="px-3 py-2 text-end">
-                  <button
-                    type="button"
-                    disabled={downloadDisabled}
-                    title={!hasSystem ? 'Unknown system — cannot download' : undefined}
-                    onClick={() => onAdd(item)}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                      downloadDisabled
-                        ? 'cursor-not-allowed bg-vault-panel2 text-vault-muted'
-                        : 'bg-vault-accent text-vault-bg hover:brightness-110'
-                    }`}
-                  >
-                    {queued ? 'Queued' : !hasSystem ? 'Unavailable' : 'Download'}
-                  </button>
-                </td>
+                <td className="px-3 py-2 text-vault-muted">{row.rating ?? '—'}</td>
+                <td className="px-3 py-2 text-vault-muted">{row.sizeText ?? '—'}</td>
+                {sourceIds.map((source) => (
+                  <td key={source} className="px-3 py-2 text-end">
+                    <SourceCell row={row} source={source} queuedKeys={queuedKeys} onAdd={onAdd} />
+                  </td>
+                ))}
               </tr>
             );
           })}

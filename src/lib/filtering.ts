@@ -1,4 +1,4 @@
-import type { GameListItem, Region } from '@shared/types';
+import type { MergedRow, Region } from '@shared/types';
 
 export interface ListingFilters {
   regions: Region[];
@@ -15,28 +15,28 @@ export const EMPTY_FILTERS: ListingFilters = {
 };
 
 /** Apply region/version/rating filters. Empty region list means "all regions". */
-export function applyFilters(items: GameListItem[], filters: ListingFilters): GameListItem[] {
-  return items.filter((item) => {
+export function applyFilters(rows: MergedRow[], filters: ListingFilters): MergedRow[] {
+  return rows.filter((row) => {
     if (filters.regions.length > 0) {
-      const hasRegion = item.regions.some((r) => filters.regions.includes(r));
+      const hasRegion = row.regions.some((r) => filters.regions.includes(r));
       if (!hasRegion) return false;
     }
     if (filters.version) {
-      const v = item.version?.toLowerCase() ?? '';
+      const v = row.version?.toLowerCase() ?? '';
       if (!v.includes(filters.version.toLowerCase())) return false;
     }
     if (filters.ratedOnly) {
-      if (!item.rating || item.rating.toLowerCase() === 'none') return false;
+      if (!row.rating || row.rating.toLowerCase() === 'none') return false;
     }
     return true;
   });
 }
 
 /** Derive the union of regions actually present across a listing, in Region enum order. */
-export function collectRegions(items: GameListItem[]): Region[] {
+export function collectRegions(rows: MergedRow[]): Region[] {
   const present = new Set<Region>();
-  for (const item of items) {
-    for (const r of item.regions) present.add(r);
+  for (const row of rows) {
+    for (const r of row.regions) present.add(r);
   }
   const order: Region[] = [
     'USA',

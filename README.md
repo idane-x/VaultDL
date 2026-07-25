@@ -9,6 +9,24 @@ straight into your **EmuDeck-style ROM folders**.
 > ordinary browser (real headers, one download at a time by default) — please keep it
 > polite and don't hammer the site.
 
+## Sources
+
+VaultDL merges **two** catalogs into one list. Each row shows a download button per source —
+both enabled when both carry the game, one when only a single source has it:
+
+| Source | Catalog | Notes |
+|---|---|---|
+| [Vimm's Lair](https://vimm.net/vault) | 37 systems | Rich metadata (region, version, languages, rating) |
+| [romsfun](https://romsfun.com/roms/) | 68 consoles, ~71.5k ROMs | Adds MS-DOS, Windows, Amiga, MSX, MAME, ScummVM, PS4, PS Vita…; resumable downloads |
+
+Rows are merged by fuzzy title match within the same system, deliberately biased **against**
+merging — a duplicate row is a much better failure than downloading the wrong game.
+
+> **Network note:** romsfun is behind Cloudflare TLS fingerprinting, which rejects Node's
+> built-in fetch with a hard 403 no matter the headers. All outbound traffic therefore goes
+> through Electron's Chromium stack (`net.fetch`, see `electron/services/appFetch.ts`). This
+> is also why romsfun's live test can't run under vitest — use `npm run verify:romsfun`.
+
 ## Features
 
 - **Per-console browsing** — all 34 vault systems in a sidebar (Home / Handheld), each with
@@ -61,8 +79,9 @@ src/                    React renderer (Vite + Tailwind) — talks only to windo
 npm install
 npm run dev        # Vite + Electron with hot reload
 npm run typecheck  # tsc --noEmit for both renderer and main
-npm test           # offline unit tests (HTML-fixture parser tests)
-LIVE=1 npm test    # also runs the live end-to-end test (hits vimm.net, downloads 1 ROM)
+npm test           # offline unit tests (fixture parsers, cross-source merge, matching)
+LIVE=1 npm test    # also runs the live Vimm end-to-end test (downloads 1 small ROM)
+npm run verify:romsfun   # live romsfun end-to-end, run under Electron (see network note)
 ```
 
 ## Building the installer

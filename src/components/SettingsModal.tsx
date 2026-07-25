@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { Settings } from '@shared/types';
+import type { SourceId, Settings } from '@shared/types';
+import { SOURCE_LABELS } from '@shared/types';
 import { SYSTEMS } from '@shared/systems';
+
+const SOURCE_ORDER: SourceId[] = ['vimm', 'romsfun'];
 
 export interface SettingsModalProps {
   open: boolean;
@@ -143,6 +146,44 @@ export default function SettingsModal({
                 className="h-4 w-4 rounded border-vault-border bg-vault-panel2 accent-vault-accent"
               />
             </label>
+          </section>
+
+          <section className="space-y-2 border-t border-vault-border pt-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-vault-muted">
+              Sources
+            </div>
+            {SOURCE_ORDER.map((id) => {
+              const checked = draft.enabledSources[id];
+              const enabledCount = SOURCE_ORDER.filter((s) => draft.enabledSources[s]).length;
+              const isLastEnabled = checked && enabledCount <= 1;
+              return (
+                <label
+                  key={id}
+                  className={`flex items-center justify-between text-sm text-vault-text ${
+                    isLastEnabled ? 'opacity-70' : ''
+                  }`}
+                >
+                  <span>{SOURCE_LABELS[id]}</span>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={isLastEnabled}
+                    title={isLastEnabled ? 'At least one source must stay enabled' : undefined}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        enabledSources: { ...d.enabledSources, [id]: e.target.checked },
+                      }))
+                    }
+                    className="h-4 w-4 rounded border-vault-border bg-vault-panel2 accent-vault-accent"
+                  />
+                </label>
+              );
+            })}
+            <p className="text-xs text-vault-muted">
+              A disabled source is never queried and its column is hidden. At least one source
+              must stay enabled.
+            </p>
           </section>
 
           <section className="space-y-3 border-t border-vault-border pt-4">

@@ -12,23 +12,27 @@
  */
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { createWriteStream, rmSync } from 'node:fs';
+import { createWriteStream, existsSync, statSync, rmSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { ReadableStream } from 'node:stream/web';
-import type { DownloadProgress, GameDetail, QueueItem } from '@shared/types.js';
-import { buildDownloadRequest, fetchDetail } from './VimmClient.js';
+import type { DownloadProgress, QueueItem, SourceId, SourceRef } from '@shared/types.js';
+import { getProvider } from './sources/index.js';
+import { appFetch } from './appFetch.js';
+import type { ResolvedDownload } from './sources/types.js';
 import { ensureFolder } from './FolderResolver.js';
 import { extractArchive } from './Extractor.js';
 import { getSettings } from './SettingsStore.js';
 
 /** Input accepted by enqueue() — mirrors VimmApi.enqueue's parameter shape. */
 export interface EnqueueInput {
+  source: SourceId;
+  sourceRef: SourceRef;
   vaultId: number;
   systemCode: string;
-  mediaId: number;
-  altIndex: number;
+  mediaId?: number;
+  altIndex?: number;
   title: string;
   filename: string;
 }
@@ -43,6 +47,13 @@ const PROGRESS_INTERVAL_MS = 250;
 const MAX_RETRIES = 2;
 const FINISHED_STATUSES: QueueItem['status'][] = ['done', 'failed', 'canceled'];
 
+/** Extract the total size from a `Content-Range: bytes {start}-{end}/{total}` header. */
+function parseContentRangeTotal(header: string | null): number | null {
+  if (!header) return null;
+  const m = /\/(\d+)\s*$/.exec(header.trim());
+  return m ? Number(m[1]) : null;
+}
+
 class DownloadManagerImpl extends EventEmitter {
   private queue: QueueItem[] = [];
   private internal = new Map<string, InternalState>();
@@ -53,6 +64,8 @@ class DownloadManagerImpl extends EventEmitter {
 
     const item: QueueItem = {
       id: randomUUID(),
+      source: input.source,
+      sourceRef: input.sourceRef,
       vaultId: input.vaultId,
       systemCode: input.systemCode,
       mediaId: input.mediaId,
@@ -196,22 +209,65 @@ class DownloadManagerImpl extends EventEmitter {
     state.controller = controller;
 
     try {
-      const detail: GameDetail = await fetchDetail(item.vaultId, item.systemCode, {
-        userAgent: settings.userAgent,
-      });
-      const { url, init } = buildDownloadRequest(detail, item.altIndex, settings.userAgent);
+      // Resolve INSIDE runDownload, never at enqueue time: romsfun CDN links carry a token
+      // that expires after a few hours, so an item that has been sitting in the queue must
+      // get a freshly-resolved URL right before it actually starts streaming, not whatever
+      // was valid back when it was queued.
+      const resolved: ResolvedDownload = await getProvider(item.source).resolveDownload(
+        item.sourceRef,
+        { userAgent: settings.userAgent, fetchImpl: appFetch },
+      );
 
-      const res = await fetch(url, { ...init, signal: controller.signal });
+      const tempFile = this.tempPath(id);
+      let existingSize = 0;
+      if (resolved.supportsResume && existsSync(tempFile)) {
+        try {
+          existingSize = statSync(tempFile).size;
+        } catch {
+          existingSize = 0;
+        }
+      }
+
+      const headers = new Headers(resolved.init.headers);
+      if (existingSize > 0) {
+        headers.set('Range', `bytes=${existingSize}-`);
+      }
+
+      // appFetch (Chromium's stack) rather than Node's fetch: romsfun's CDN sits behind the
+      // same Cloudflare TLS fingerprinting that blocks undici outright.
+      const res = await appFetch(resolved.url, {
+        ...resolved.init,
+        headers,
+        signal: controller.signal,
+      });
       if (!res.ok || !res.body) {
         throw new Error(`Download failed: HTTP ${res.status}`);
       }
 
-      item.filename = this.resolveFilename(res, detail, item.altIndex);
-      const totalHeader = res.headers.get('content-length');
-      item.totalBytes = totalHeader ? Number(totalHeader) : null;
+      // A Range request only actually resumes when the server answers 206. A 200 means it
+      // ignored Range entirely, so the response body is the full file again — truncate and
+      // start over rather than appending a full copy after the partial bytes we already had.
+      const isResuming = existingSize > 0 && res.status === 206;
+      const startBytes = isResuming ? existingSize : 0;
 
-      const tempFile = this.tempPath(id);
-      await this.streamToFile(res.body as ReadableStream<Uint8Array>, tempFile, item, controller.signal);
+      item.filename = this.resolveFilename(res, resolved);
+
+      if (isResuming) {
+        const rangeTotal = parseContentRangeTotal(res.headers.get('content-range'));
+        item.totalBytes = rangeTotal ?? resolved.sizeBytes ?? null;
+      } else {
+        const totalHeader = res.headers.get('content-length');
+        item.totalBytes = totalHeader ? Number(totalHeader) : (resolved.sizeBytes ?? null);
+      }
+
+      await this.streamToFile(
+        res.body as ReadableStream<Uint8Array>,
+        tempFile,
+        item,
+        controller.signal,
+        startBytes,
+        isResuming,
+      );
 
       const destPath = path.join(item.targetFolder, item.filename);
       await this.moveFile(tempFile, destPath);
@@ -234,14 +290,19 @@ class DownloadManagerImpl extends EventEmitter {
     } catch (err) {
       if (controller.signal.aborted) {
         if (state.pauseRequested) {
+          // Deliberately keep the `.part` file on disk: resume() re-enters runDownload,
+          // which re-checks resolved.supportsResume and, if true, Range-requests from
+          // exactly this file's current size instead of restarting the whole download.
           item.status = 'paused';
           state.pauseRequested = false;
         } else if ((item.status as QueueItem['status']) !== 'canceled') {
           // `item.status` can be mutated concurrently by cancel() while this await was
           // pending; TS's control-flow narrowing doesn't know that, hence the cast.
           item.status = 'canceled';
+          this.cleanupTemp(id);
+        } else {
+          // Reached via cancel()'s own abort(); cancel() already cleaned up the temp file.
         }
-        this.cleanupTemp(id);
         this.emitQueueChanged();
         return;
       }
@@ -250,7 +311,9 @@ class DownloadManagerImpl extends EventEmitter {
 
       if (state.retries < MAX_RETRIES && this.isRetryable(err)) {
         state.retries += 1;
-        this.cleanupTemp(id);
+        // Keep the `.part` file: most retryable failures are mid-stream network blips, and
+        // the next attempt will Range-resume from it when the source supports resume (and
+        // safely truncate-and-restart via the non-append write path when it doesn't).
         const attempt = state.retries;
         // Deliberately leave status as 'downloading' during the backoff wait so a
         // concurrent scheduler tick (concurrency > 1) can't pick this id up a second
@@ -284,7 +347,7 @@ class DownloadManagerImpl extends EventEmitter {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private resolveFilename(res: Response, detail: GameDetail, altIndex: number): string {
+  private resolveFilename(res: Response, resolved: ResolvedDownload): string {
     const disposition = res.headers.get('content-disposition');
     if (disposition) {
       const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
@@ -297,8 +360,7 @@ class DownloadManagerImpl extends EventEmitter {
       }
     }
 
-    const entry = detail.media[altIndex] ?? detail.media[0];
-    const base = path.basename(entry.filename);
+    const base = path.basename(resolved.filename);
     return /\.[^./\\]+$/.test(base) ? base : `${base}.zip`;
   }
 
@@ -307,15 +369,23 @@ class DownloadManagerImpl extends EventEmitter {
     destPath: string,
     item: QueueItem,
     signal: AbortSignal,
+    startBytes: number,
+    append: boolean,
   ): Promise<void> {
     await fsp.mkdir(path.dirname(destPath), { recursive: true });
-    const writable = createWriteStream(destPath);
+    // Append when resuming a partial `.part` file the server accepted a Range request for;
+    // otherwise ('w') truncate and start clean, covering both the plain first-attempt case
+    // and the "server ignored our Range header" fallback.
+    const writable = createWriteStream(destPath, { flags: append ? 'a' : 'w' });
     const reader = body.getReader();
 
-    let received = 0;
+    let received = startBytes;
     let lastEmit = 0;
-    let lastBytes = 0;
+    let lastBytes = received;
     let lastTime = Date.now();
+
+    item.receivedBytes = received;
+    item.progress = item.totalBytes ? Math.min(1, received / item.totalBytes) : item.progress;
 
     try {
       for (;;) {

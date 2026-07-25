@@ -5,6 +5,13 @@
  */
 
 const ARTICLE_RE = /^(the|a|an)\s+/;
+/**
+ * No-Intro/Vimm move the leading article to the end: "Legend of Zelda, The" and
+ * "Legend of Zelda, The: Link's Awakening". Other catalogues (romsfun, TheGamesDB, RAWG)
+ * write them naturally, so without this the same game normalizes to two different strings
+ * and a real match can score below the merge threshold. Runs while the comma still exists.
+ */
+const TRAILING_ARTICLE_RE = /,\s*(the|a|an)\b(?=\s*(:|$))/g;
 // Parenthetical/bracket tag groups: (USA), (Rev 1), (En,Fr,De), [!], [b], etc. A group
 // never nests another bracket/paren, so a non-greedy "no bracket chars inside" class is
 // enough; the leading \s* also swallows the space that preceded the tag.
@@ -29,6 +36,8 @@ export function normalizeTitle(raw: string): string {
 
   s = s.toLowerCase();
   s = s.replace(/&/g, ' and ');
+  // Fold "Title, The" -> "Title" while the comma is still present to anchor on.
+  s = s.replace(TRAILING_ARTICLE_RE, '');
   // Strip remaining punctuation (colons, apostrophes, exclamation marks, hyphens, ...).
   s = s.replace(/[^a-z0-9\s]/g, ' ');
   s = s.replace(/\s+/g, ' ').trim();

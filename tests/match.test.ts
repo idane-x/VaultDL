@@ -91,3 +91,34 @@ describe('pickBest', () => {
     expect(pickBest('Anything', [], (i: Item) => i.title)).toBeNull();
   });
 });
+
+/**
+ * Vimm follows the No-Intro convention of moving the leading article to the end
+ * ("Legend of Zelda, The"), while romsfun / TheGamesDB / RAWG write titles naturally.
+ * Without folding that back, real cross-source matches scored BELOW the 0.85 merge
+ * threshold (0.823) — lower than a genuinely wrong pairing like Final Fantasy VII vs VIII
+ * (0.806) — so the same game would show up as two rows. These lock in the fix.
+ */
+describe('trailing-article normalization (cross-source matching)', () => {
+  const pairs: [string, string][] = [
+    ['Legend of Zelda, The (USA)', 'The Legend of Zelda'],
+    ["Legend of Zelda, The: Link's Awakening (USA)", "The Legend of Zelda: Link's Awakening"],
+    ['Adventures of Batman & Robin, The (USA)', 'The Adventures of Batman & Robin'],
+    ['Simpsons, The: Bart vs. the Space Mutants', 'The Simpsons: Bart vs. the Space Mutants'],
+  ];
+
+  it.each(pairs)('folds "%s" onto "%s"', (a, b) => {
+    expect(normalizeTitle(a)).toBe(normalizeTitle(b));
+    expect(scoreMatch(a, b)).toBe(1);
+  });
+
+  it('keeps genuinely different titles apart with a safe margin', () => {
+    // Must stay well below the 0.85 merge threshold — a wrong merge downloads the wrong game.
+    expect(scoreMatch('Final Fantasy VII', 'Final Fantasy VIII')).toBeLessThan(0.85);
+  });
+
+  it('does not strip a comma-article that is mid-title', () => {
+    // Only a trailing ", The" (or before a subtitle colon) is an article marker.
+    expect(normalizeTitle('Me, Myself and I')).toContain('myself');
+  });
+});

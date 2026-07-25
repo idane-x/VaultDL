@@ -7,11 +7,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
-import type { ListPage } from '@shared/types.js';
+import type { MergedPage } from '@shared/types.js';
 import { getSettings } from './SettingsStore.js';
 
 interface CacheEntry {
-  data: ListPage;
+  data: MergedPage;
   fetchedAt: number;
 }
 
@@ -56,7 +56,7 @@ class CacheStoreImpl {
     }
   }
 
-  get(key: string): ListPage | null {
+  get(key: string): MergedPage | null {
     this.ensureLoaded();
     const entry = this.cache[key];
     if (!entry) return null;
@@ -69,7 +69,7 @@ class CacheStoreImpl {
     return entry.data;
   }
 
-  set(key: string, data: ListPage): void {
+  set(key: string, data: MergedPage): void {
     this.ensureLoaded();
     this.cache[key] = { data, fetchedAt: Date.now() };
     this.persist();

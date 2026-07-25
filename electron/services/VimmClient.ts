@@ -165,6 +165,8 @@ export function parseList(html: string, opts: ParseListOpts): ListPage {
 
       items.push({
         vaultId,
+        source: 'vimm',
+        sourceRef: { source: 'vimm', id: String(vaultId), variant: 0 },
         title,
         systemCode,
         regions,
